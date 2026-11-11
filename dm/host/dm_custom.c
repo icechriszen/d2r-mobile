@@ -235,11 +235,12 @@ void dm_custom_ui_pump(unsigned long long root) {
     // Controller mode: the original options page's focus only recognizes its own rows in the table and cannot reach our checkboxes. D-pad up/down selects a row
     // (the original controller selection frame TouchCustomSel frames that row), A toggles the checkbox (handled below as "the player tapped it"), and all other
     // buttons go to the original as before
-    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current();
+    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel, scroll_selection; static dm_wref sel_sp; int pad = dm_padmode_current();
       { uint64_t cm = find_w(root, "ConfirmationModal", 1); if (cm && *(uint8_t *)(cm + 0x50)) pad = 0; }   // 原版「设定已更改，应用 / 放弃」确认框开着：键全还给它（实测：不让的话 A 落在我们这一行上、点不到「应用」） | The original "Settings changed, Apply / Discard" confirmation box is open: hand all keys back to it (measured: otherwise A lands on our row and "Apply" cannot be reached)
-      if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = -1; }
+      if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = -1; scroll_selection = 1; }
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
+          if (ev) scroll_selection = 1;   // 仅跟随本次按键导航，不拉回之后的鼠标/触摸滚动 | Follow this navigation only; leave subsequent pointer scrolling alone.
           int d = (ev & DM_BTN_DOWN) ? 1 : (ev & DM_BTN_UP) ? -1 : 0;
           for (int i = sel + d; d && i >= -1 && i < NK; i += d) {
               if (i == -1) { if (find_w(sp, "DMCloudSaves", 0)) { sel = i; break; } continue; }
@@ -282,9 +283,9 @@ void dm_custom_ui_pump(unsigned long long root) {
       // 已滚的量 = 内层视图（行容器的父控件）矩形 y 的相反数；框高 = 滚动区（再上一级）的高。只读这两个数，不写原版控件
       // This page can scroll (the rows are in the original scroll area, touch_layout.py _custom_page): when the controller selects a row outside the list box, let the original scroll area scroll into place by itself -- send wheel events, one notch every 4 frames, until the whole row is inside the box.
       // Amount scrolled = the negative of the rect y of the inner view (the parent widget of the row container); box height = the height of the scroll area (one level further up). Only these two numbers are read; the original game's widgets are not written
-      if (pad && tw && cw) { uint64_t rw = find_w(sp, "TouchCustomRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0; static uint64_t lf; uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame();
+      if (pad && scroll_selection && tw && cw) { uint64_t rw = find_w(sp, "TouchCustomRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0; static uint64_t lf; uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame();
           if (sv && f - lf >= 4) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) - 10, bot = (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + 10;
-              int off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int); if (sel == 0) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
+              int off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int); if (sel <= 0) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
               // 滚到头了还差一点（最后一行「暗处加亮」整行比滚动区最底还低 24 单位）：同方向连着两格已滚量都没变就停，换行再算。不停的话每 4 帧发一次鼠标移动 + 滚轮，
               // iPhone 上把原版页面搅得自己往下滚、在暂停菜单和选项之间来回跳
               // Scrolled to the end and still a little short (the last row "Brighten dark places" ends 24 units below the bottom of the scroll area): stop once two notches in a row in the same
@@ -292,7 +293,8 @@ void dm_custom_ui_pump(unsigned long long root) {
               static int lo, ldir, lsel = -1, stuck; int dir = top < off ? 1 : bot > off + vh ? -1 : 0;
               if (sel != lsel || dir != ldir || off != lo) stuck = 0; else if (dir) stuck++;
               lsel = sel; ldir = dir; lo = off;
-              if (dir && stuck < 2) { lf = f; dm_ui_wheel_on(sv, dir); } } } }
+              if (dir && stuck < 2) { lf = f; dm_ui_wheel_on(sv, dir); }
+              else scroll_selection = 0; } } }
     radio_pump(sp, 0, k_lang_box, k_lang_name, LANG_N, &seen[0]);   // 语言行：六项单选，存一个键 lang | language row: six-option radio, one key lang
     radio_pump(sp, K_CAM, k_cam_box, k_cam_name, CAM_N, &seen[K_CAM]);   // 镜头视角：三项单选，存一个键 cam | camera view: three-option radio, one key cam
     radio_pump(sp, K_BRIGHT, k_bright_box, k_bright_name, BRIGHT_N, &seen[K_BRIGHT]);   // 暗处加亮：三项单选，存一个键 bright | brightening: three-option radio, one key bright

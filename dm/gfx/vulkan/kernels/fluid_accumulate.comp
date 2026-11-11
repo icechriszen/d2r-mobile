@@ -1,0 +1,57 @@
+#version 450
+// 1.0.34.0 fluid accumulation (shader key 098a126f92bf533a).
+// Compact the same 512-particle tile mask using a workgroup prefix sum.
+// No subgroup width assumptions: the original ballot/shuffle/atomic list
+// corrupts indices on the tested Adreno 740 driver, then hangs the GPU.
+layout(local_size_x=8, local_size_y=8, local_size_z=1) in;
+layout(set=0, binding=11, std430) readonly buffer Masks { uint masks[]; };
+layout(set=0, binding=17, std430) readonly buffer Particles { uint particles[]; };
+layout(set=0, binding=23) uniform writeonly image2D resultImage;
+shared uint counts[64];
+shared uint particleIds[512];
+shared uint particleCount;
+
+void compactTile(uint bits) {
+    uint lane=gl_LocalInvocationIndex;
+    counts[lane]=uint(bitCount(bits));
+    barrier();
+    uint offset=0;
+    for(uint i=0; i<lane; ++i) offset+=counts[i];
+    if(lane==63) particleCount=offset+counts[lane];
+    for(uint bit=0; bit<8; ++bit)
+        if((bits & (1u<<bit))!=0) particleIds[offset++]=lane*8+bit;
+    barrier();
+}
+
+vec4 accumulate(vec2 pixel) {
+    float height=0, velocity=0;
+    for(uint i=0; i<particleCount; ++i) {
+        uint p=particleIds[i]*8;
+        float x=uintBitsToFloat(particles[p]);
+        float y=uintBitsToFloat(particles[p+1]);
+        float radius=uintBitsToFloat(particles[p+7]);
+        float amplitude=uintBitsToFloat(particles[p+6]);
+        float speed=uintBitsToFloat(particles[p+5]);
+        float dx=abs(fma(pixel.x,-0.00390625,x));
+        float dy=abs(fma(pixel.y,-0.00390625,y));
+        if(dx>0.5) dx=1.0-dx;
+        if(dy>0.5) dy=1.0-dy;
+        float distance=sqrt(fma(dy,dy,dx*dx));
+        float inverseRadius=1.0/radius;
+        float phase=(inverseRadius*distance)*3.1415927410125732421875;
+        float scaled=(inverseRadius*0.5)*distance;
+        float gate=float(scaled>=-0.5 && scaled<=0.5);
+        float halfAmplitude=amplitude*0.5;
+        height=fma(fma(cos(phase),halfAmplitude,halfAmplitude),gate,height);
+        velocity=fma(speed*sin(-phase),gate,velocity);
+    }
+    return vec4(velocity,height,velocity,1);
+}
+void main() {
+    uint lane=gl_LocalInvocationIndex;
+    uint tile=gl_WorkGroupID.y*32+gl_WorkGroupID.x;
+    uint bits=(masks[tile*16+lane/4]>>((lane&3)*8))&255;
+    compactTile(bits);
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
+    imageStore(resultImage,pixel,accumulate(vec2(pixel)));
+}

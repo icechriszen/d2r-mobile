@@ -64,7 +64,12 @@ public final class TouchOverlay extends View {
     private final String lifeFormat, manaFormat, levelFormat, cancelLabel;
     private JSONObject hudUi;
     private float safeLeft, safeRight, safeBottom;
-    private boolean running, inputEnabled;
+    private boolean running, inputEnabled, controllerMode;
+    private static native boolean nativeModeBusy();
+    public void setControllerMode(boolean pad) {
+        if (controllerMode == pad) return;
+        cancelTouches(); controllerMode = pad; drawnValid = false; invalidate();
+    }
 
     /** labels为本地化表中的15项：12键、摇杆、换组、难度；menuLabels为导航态前五键。 | Pass 15 localized game labels and five navigation labels from the shared string table. */
     public TouchOverlay(Context context, String[] labels, String[] menuLabels) {
@@ -138,6 +143,7 @@ public final class TouchOverlay extends View {
     }
     @Override public boolean onTouchEvent(MotionEvent e) {
         if (!inputEnabled) return false;
+        if (controllerMode || nativeModeBusy()) return true;
         int action=e.getActionMasked(), index=e.getActionIndex();
         if (action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
             for (int s=0;s<16;++s) if (pointerIds[s]<0) {
@@ -425,7 +431,7 @@ public final class TouchOverlay extends View {
         } catch(Exception ignored) { /* 缺损美术不制造HUD数据。 | Missing art never fabricates HUD values. */ }
     }
     @Override protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas); if (!inputEnabled) return; nativeLayout(layout); System.arraycopy(layout, 0, drawn, 0, layout.length); drawnValid=true;
+        super.onDraw(canvas); if (!inputEnabled || controllerMode || nativeModeBusy()) return; nativeLayout(layout); System.arraycopy(layout, 0, drawn, 0, layout.length); drawnValid=true;
         canvas.save(); canvas.scale(density,density);
         boolean navigation=layout[2]!=0;
         float k=layout[4+12*5+2]/60;   // 与 iOS 同一个字号 / 粗细单位：摇杆半径 / 60 | the same size unit as iOS: joystick radius / 60

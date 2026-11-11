@@ -281,7 +281,15 @@ def _pc_mainmenu(s):
     s, n = offscreen(s, types=(), names=('OnlinePlaySettingsButton', 'Divider', 'SecondaryContextButton'))
     if n != 3: raise SystemExit('touch_layout：键鼠版主菜单要挪走的控件应为 3 个，找到 %d 个' % n)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _UPDATE + '    ' + s[i:], n + 2
+    # 空存档不会自动跳过首页；保留一个原版设置按钮，让连接与失败重试始终可达。
+    # Empty saves stay on this page; keep a native Options button so connection/retry remains reachable.
+    settings = {'type':'ButtonWidget','name':'TouchMainSettings','fields':{
+        'anchor':{'x':0.5},'rect':{'x':-1000,'y':1865},
+        'filename':'FrontEnd/HD/Final/FrontEnd_ButtonLarge','textString':'@OptionsHD',
+        'text/style':'$StyleFEButtonText','textColor':'$LightButtonTextColor',
+        'hoveredFrame':3,'disabledFrame':2,'sound':'cursor_menu_select_hd',
+        'onClickMessage':'PanelManager:OpenPanel:SettingsPanel'}}
+    return s[:i].rstrip(' ') + _UPDATE + json.dumps(settings) + ',\n    ' + s[i:], n + 2
 def _pc_charselect(s):
     # 右侧存档列表：整块往里收 SAFE_X；「线上 / 离线」页签挪走（只有离线）；列表三行字用回原主机档字号（统一 40 的大字装不下三行）
     # Save list on the right: the whole block is pulled inward by SAFE_X; the 「线上 / 离线」(Online / Offline) tabs are moved away (offline only); the three text lines of the list go back to the original console profile font sizes (the uniform large size of 40 does not fit three lines)
@@ -341,7 +349,7 @@ def build_pcfront(romfs, outdir):
             o = os.path.join(outdir, 'pcfront_base_' + pc); open(o, 'w', encoding='utf-8').write(text); repl[base] = o
             _, mid = read_layout(romfs, 'controller/' + pc); mid, _n = offscreen(mid)
             mid = _sub1(mid, '"basedOn": "%s"' % os.path.basename(ppath), '"basedOn": "1touchbase_lay/%s"' % pc)
-        if pc == 'mainmenupanelhd.json': i = mid.rstrip().rfind(']'); mid = mid[:i] + _UPDATE_STUB + mid[i:]   # 继承层要按名字逐个点到子控件才会建：新加的七个也列上 | The inheriting layer only builds child widgets that are named one by one: the seven newly added ones are listed too
+        if pc == 'mainmenupanelhd.json': i = mid.rstrip().rfind(']'); mid = mid[:i] + _UPDATE_STUB + '{"type":"ButtonWidget","name":"TouchMainSettings"},\n' + mid[i:]   # 继承层要按名字逐个点到子控件才会建：新加的七个也列上 | The inheriting layer only builds child widgets that are named one by one: the seven newly added ones are listed too
         o = os.path.join(outdir, 'pcfront_' + rel.replace('/', '_')); open(o, 'w', encoding='utf-8').write(mid); repl[cpath.lower()] = o
     return repl
 
@@ -682,6 +690,13 @@ def _kb_keys():   # 名单的键取自 dm_kills.c（一处定义） | The keys o
 def _kb_text(name, x, y, w, h, color, size, align='left', text=''):
     return {'type': 'TextBoxWidget', 'name': name, 'fields': {'rect': {'x': x, 'y': y, 'width': w, 'height': h}, 'text': text,
             'style': {'fontColor': color, 'pointSize': size, 'alignment': {'h': align, 'v': 'center'}}}}
+def _cloud_entry_status():
+    # 紧凑状态允许换行，避免离线/重试说明越过设置页边框。
+    # Wrap compact status text so offline/retry messages stay inside the settings panel.
+    label = _kb_text('TouchCS_EntryStatus',850,_CUSTOM_TITLE_H+10,620,150,'$FontColorLightGold',32)
+    label['fields']['style']['options'] = {'lineWrap': True, 'newlineHandling': 'standard'}
+    return label
+
 def _kb_check(name, x, label):
     return [{'type': 'ToggleButtonWidget', 'name': name, 'fields': {'rect': {'x': x, 'y': 0, 'width': 65, 'height': 65}, 'sound': 'cursor_menu_select_hd',
              'filename': 'Lobby\\CreateGame\\CreateGame_AdvancedCheckbox', 'untoggledFrame': 0, 'untoggledPressedFrame': 1, 'untoggledHoveredFrame': 3, 'untoggledDisabledFrame': 2,
@@ -1207,8 +1222,8 @@ _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试�
 # "3D Quality" (q3d) is a radio with two options, each with a line of small description text below, taking two rows of height (_CUSTOM_Q3D_H); every other row is one row high
 _CUSTOM_Q3D_H = 2 * _CUSTOM_LINE_H
 _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
-_CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
-_CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
+_CUSTOM_Y = [_CUSTOM_TITLE_H + _CUSTOM_LINE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
+_CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H) + _CUSTOM_LINE_H
 def _custom_toggle_row(i, key, label):
     y, h = _CUSTOM_Y[i], _CUSTOM_LINE_H
     return ('        { "type": "TextBoxWidget", "name": "TouchCustom_%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "%s", "style": "$StyleSettingsText", "style/options/newlineHandling": "standard" } },\n'
@@ -1283,6 +1298,8 @@ def _custom_page(text):
            '            { "type": "TableWidget", "name": "OptionsTable", "fields": { "columns": [ "$OptionsTableColumn1", "$OptionsTableColumn2" ], "rowHeight": %d }, "children": [\n' % _CUSTOM_TITLE_H
            + title + '            ] },\n'
            + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1500, "height": %d } }, "children": [\n' % _CUSTOM_H
+           + json.dumps(_rf_btn('DMCloudSaves', 350, _CUSTOM_TITLE_H + 20, 'FrontEnd/HD/Final/FrontEnd_ButtonLarge', _RF_BTN, 0.75, '@dmCloudSaves')) + ',\n'
+           + json.dumps(_cloud_entry_status()) + ',\n'
            + _custom_lang_row() + ''.join((_custom_q3d_row(i, k) if k in ('voice', 'q3d', 'touch_swap_above') else _custom_toggle_row(i, k, l)) for i, (k, l) in enumerate(_CUSTOM_ALL) if i) + _CUSTOM_LANG_HINT
            + ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomTest%d_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "@KeyBindingTypeCustom", "style": "$StyleSettingsText" } },\n'
                      % (n, _CUSTOM_Y[len(_CUSTOM_ALL) + n], _CUSTOM_LINE_H) for n in range(_CUSTOM_TEST_ROWS)) +
@@ -1292,12 +1309,22 @@ def _custom_page(text):
            '"filename": "Controller/PANEL/ControllerSelector/ControllerSelectorBorder", "tileScale": 0.5 } },\n'
            '            ] },\n        ] },\n'
            '    ]\n}\n')
+    # 云存档是自定义页内的独立模态子树，不借用其他功能的面板。
+    # Cloud saves are an independent modal subtree inside Custom, without borrowing another feature's panel.
+    from cloud_layout import panel as cloud_panel
+    end = out.rfind('    ]\n}\n')
+    out = out[:end] + json.dumps(cloud_panel(), ensure_ascii=False) + ',\n' + out[end:]
     return out, len(_CUSTOM_ALL) + 2
 PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page
 # 手柄版选项页：原版页签条不动，只把第一项「视频」换成「自定义」——它打开的视频页就是上面那份自定义页（两种模式同一份内容）
 # Controller options page: the original tab bar is untouched, only the first item "Video" is replaced by "Custom"; the video page it opens is the Custom
 # page above (same content in both modes)
-def pad_settings(s): return _sub1(s, '"@OptionsMenuVideo"', '"@KeyBindingTypeCustom"')   # 原版串：自定义 / Custom（跟游戏语言走） | original string: "Custom" in Chinese / English (follows the game language)
+def pad_settings(s):
+    # 键鼠和手柄也使用短页签与较宽按钮，避免英文 Gameplay 换行、Game Settings 截断。
+    # Keyboard/mouse and controller tabs also use short labels and wider buttons to avoid wrapping/truncation.
+    s = _sub1(s, '"@OptionsMenuVideo"', '"@dmTabCustom"')
+    s = _sub1(s, '"@GameSettingsTab"', '"@dmTabGameSettings"')
+    return _sub1(s, '"tabCount": 5,', '"tabCount": 5, "tabSize": { "x": 320, "y": 121 }, "textStyle/pointSize": 36,')
 def pad_custom_page(s): return _custom_page(s)[0]
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced

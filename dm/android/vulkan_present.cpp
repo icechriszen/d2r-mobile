@@ -33,6 +33,20 @@ std::mutex window_mutex;std::condition_variable window_cv;
 std::mutex render_mutex;
 ANativeWindow *desired=nullptr,*active=nullptr;uint64_t generation=0,active_generation=0;
 VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t family;
+// Optional per-app diagnostics. The validation library is only bundled in local
+// debug APKs; ordinary installs do not enable a layer or change driver settings.
+VkDebugUtilsMessengerEXT validation_messenger;
+FILE *validation_file=nullptr;std::atomic<unsigned> validation_messages{0};
+VKAPI_ATTR VkBool32 VKAPI_CALL validation_message(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+        VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT *data,void*){
+    unsigned ordinal=validation_messages.fetch_add(1);if(ordinal>=256)return VK_FALSE;
+    const char *message=data&&data->pMessage?data->pMessage:"(no validation message)";
+    if(validation_file){fprintf(validation_file,"%u %s\n",ordinal,message);fflush(validation_file);}
+    size_t bytes=std::min(strlen(message),size_t(16384));
+    for(size_t at=0;at<bytes;at+=900)__android_log_print(severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT?ANDROID_LOG_ERROR:ANDROID_LOG_WARN,
+        "dm-validation","[%u] %.*s",ordinal,int(std::min(size_t(900),bytes-at)),message+at);
+    return VK_FALSE;
+}
 VkSurfaceKHR surface;VkSwapchainKHR swapchain;VkFormat swap_format;VkExtent2D extent;
 VkSurfaceTransformFlagBitsKHR created_transform;VkExtent2D created_surface_extent;
 // 无旋转 blit 由系统合成器旋转；记录属性以免 SUBOPTIMAL 触发逐帧重建。
@@ -97,7 +111,10 @@ void cleanup_initialization(){
     if(device){if(overlap_fence)vkDestroyFence(device,overlap_fence,nullptr);if(overlap_acquired)vkDestroySemaphore(device,overlap_acquired,nullptr);if(overlap_pool)vkDestroyCommandPool(device,overlap_pool,nullptr);}
     overlap_fence=VK_NULL_HANDLE;overlap_acquired=VK_NULL_HANDLE;overlap_pool=VK_NULL_HANDLE;overlap_command=VK_NULL_HANDLE;overlap=false;in_flight[0]=in_flight[1]=false;flight=0;
     destroy_swap();if(device)vkDestroyDevice(device,nullptr);device=VK_NULL_HANDLE;queue=VK_NULL_HANDLE;
+    if(instance&&validation_messenger){auto destroy=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkDestroyDebugUtilsMessengerEXT"));if(destroy)destroy(instance,validation_messenger,nullptr);}
+    validation_messenger=VK_NULL_HANDLE;
     if(instance)vkDestroyInstance(instance,nullptr);instance=VK_NULL_HANDLE;physical=VK_NULL_HANDLE;
+    if(validation_file){fclose(validation_file);validation_file=nullptr;}
 }
 // 刷新率投票：App 不投票时，安卓（MIUI）让这个表面跑 60 Hz，尽管屏和系统设置都允许 120。投 120 Hz 不改 60 帧的出图节奏（nvn_pace_hz），
 // 但赶不上 16.7 ms 的那一帧在屏上停 25 ms 而不是 33.3 ms。标记 gfx-frame-rate = N（Hz；0 = 不投票）。
@@ -303,7 +320,21 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     {std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-frame-rate").c_str(),"rb")){float v=0;frame_rate_vote=fscanf(m,"%f",&v)==1 && v>=0 && v<=240?v:0;fclose(m);}}
 
     VkApplicationInfo ai{VK_STRUCTURE_TYPE_APPLICATION_INFO};ai.pApplicationName="dm-android";ai.apiVersion=VK_API_VERSION_1_1;
-    const char *ext[]={VK_KHR_SURFACE_EXTENSION_NAME,VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ic.pApplicationInfo=&ai;ic.enabledExtensionCount=2;ic.ppEnabledExtensionNames=ext;VkResult r=vkCreateInstance(&ic,nullptr,&instance);if(r)return fail("vkCreateInstance",r);
+    std::vector<const char*> ext={VK_KHR_SURFACE_EXTENSION_NAME,VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
+    const char *validation_layer="VK_LAYER_KHRONOS_validation";bool validate=getenv("DM_VK_VALIDATE")&&strcmp(getenv("DM_VK_VALIDATE"),"0");
+    VkDebugUtilsMessengerCreateInfoEXT debug{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+    debug.messageSeverity=VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debug.messageType=VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;debug.pfnUserCallback=validation_message;
+    VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ic.pApplicationInfo=&ai;
+    if(validate){
+        uint32_t count=0;vkEnumerateInstanceLayerProperties(&count,nullptr);std::vector<VkLayerProperties> layers(count);vkEnumerateInstanceLayerProperties(&count,layers.data());
+        bool found=false;for(auto &layer:layers)if(!strcmp(layer.layerName,validation_layer))found=true;
+        if(!found)return fail("Requested validation layer is not packaged in this debug APK",VK_ERROR_LAYER_NOT_PRESENT);
+        ext.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);ic.enabledLayerCount=1;ic.ppEnabledLayerNames=&validation_layer;ic.pNext=&debug;
+        std::string dir=path;size_t cut=dir.find_last_of('/');validation_file=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/vulkan-validation.txt").c_str(),"wb");validation_messages=0;
+    }
+    ic.enabledExtensionCount=uint32_t(ext.size());ic.ppEnabledExtensionNames=ext.data();VkResult r=vkCreateInstance(&ic,nullptr,&instance);if(r)return fail("vkCreateInstance",r);
+    if(validate){auto create=reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkCreateDebugUtilsMessengerEXT"));if(!create)return fail("vkCreateDebugUtilsMessengerEXT unavailable",VK_ERROR_EXTENSION_NOT_PRESENT);if((r=create(instance,&debug,nullptr,&validation_messenger)))return fail("Validation messenger",r);}
     uint32_t n=0;vkEnumeratePhysicalDevices(instance,&n,nullptr);std::vector<VkPhysicalDevice> devices(n);vkEnumeratePhysicalDevices(instance,&n,devices.data());if(!n)return fail("No Vulkan device",VK_ERROR_INITIALIZATION_FAILED);
     physical=devices[0];
     // 启动期间也可能旋转/切后台；等待新窗口，不把瞬时撤回误报为启动失败。

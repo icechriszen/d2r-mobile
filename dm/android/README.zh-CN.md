@@ -26,6 +26,23 @@ python3 dm/tools/d2rm_android.py <Switch 版 3.3.94012 的 Update 目录> <输�
 
 把这个 `android` 文件夹整个拷到手机的 `Download/S2X/D2R Mobile/` 下，游戏资源（`RomFS/data` 整个目录）拷成同一处的 `data`。打开 App：发现新的导入包就拷进内部目录 `files/dm/`（显示进度，第一次一两分钟），然后启动。导入包要与 App 同一版本（`pack_info.txt` 里的产物代号与 App 编入的相同），不同时 App 会说明。导入完，手机上的 `android` 文件夹可以删掉；导入包里有游戏内容，只给自己用。
 
+## 实体手柄
+
+Android 的标准 USB / 蓝牙手柄已接入原项目的手柄输入与布局切换。第一次明确按键或推出摇杆切换到手柄布局，切换完成并松开后再操作；触屏的第一次触摸只切回触控布局。按设备报告的摇杆范围和死区读取双摇杆，支持按键/轴两种十字键、模拟/数字扳机、肩键、摇杆按下、Start 和 Select。系统 Home 键不拦截。
+
+Xbox / 通用安卓手柄：A 确认、B 返回，X/Y 功能和图标与上游 Xbox 方案一致。Sony 手柄使用上游 PS 图标；Nintendo 依据 Android 按位置报告的标准键码恢复 Switch 字母。第三方固件若更改了系统键码，需要按实机结果另行核对。暂未实现震动。
+
+摇杆推过 25% 才接管，回到 15% 以内归零；切回触屏后，偏着的摇杆必须先回中才能再次接管。多只手柄独立保存状态；移除一只不会清掉另一只按住的键。失焦或进后台清空按住和待收样按键，原生对话框仍由 Android 导航。
+
+本地状态测试：
+
+```sh
+javac -d /tmp/dm-gamepad-tests dm/android/app/src/main/java/com/xiaoboluo/d2r/GamepadState.java dm/android/tests/GamepadStateTest.java
+java -cp /tmp/dm-gamepad-tests com.xiaoboluo.d2r.GamepadStateTest
+```
+
+2026-10-25：8BitDo Ultimate C Wired Controller（USB，VID 2dc8 / PID 3017）在 SM8550 改装设备上实测进入游戏、移动及按键正常。蓝牙、Sony/Nintendo 实体设备、右摇杆瞄准和实体拔插尚未完成逐项实测，状态测试通过不等同于这些硬件已验收。
+
 ## 本地构建
 
 当前配置使用 JDK 17 或更新版本、Gradle 9.8.1、Android SDK 36、NDK 29.0.14206865、CMake 3.31.6 和 Python 3。ARM64 设备要求 Android 12/API 31 或更新系统及具备所需设备能力的 Vulkan 1.1。这些是构建和清单要求，不代表符合条件的机型都已验证。首台目标是 vivo X200 Ultra（Android 16/API 36、Adreno 830）。
@@ -72,7 +89,7 @@ APK 和 Git 仓库均不含游戏程序、着色器、游戏美术或存档。�
 
 `files/dm/shaders/` 里，游戏用到的每个着色器各有一个 `<键>.xgs`；键是该着色器控制段 SHA-256 的前 16 位十六进制。包是 XGS1 文件：文件头、各绑定、顶点输入位置、c1 字节，然后是 SPIR-V（`dm/gfx/vulkan/engine/xbg_game.h` 的 `xbg_shader_header`）。目前测试用的一套共 6,931 个包：
 
-- **6,927 个是游戏自己着色器的翻译。** 它们出自游戏文件，所以不进 Git、PR 和 APK。`dm/gfx/tools/dmsh_vk.py` 从头做出它们：用 `dm/gfx/tools/dmsh_xlate` 翻成面向 Vulkan 的 SPIR-V，绑定号改成单描述符集的编号（原号 × 6 + 阶段号）、补上「未定格式」存储图像读写的能力、裁掉多余能力，导出 `<键>.vk.json`，再用 `pack_game_shaders.py` 的打包函数写成包。做出的 6,927 个包与 biglawine 鸿蒙着色器流程做出的测试包逐字节相同（`dmsh_vk.py --compare <参考目录> <输出目录>`）。
+- **6,927 个是游戏自己着色器的翻译。** 它们出自游戏文件，所以不进 Git、PR 和 APK。`dm/gfx/tools/dmsh_vk.py` 从头做出它们：用 `dm/gfx/tools/dmsh_xlate` 翻成面向 Vulkan 的 SPIR-V，绑定号改成单描述符集的编号（原号 × 6 + 阶段号）、补上「未定格式」存储图像读写的能力、裁掉多余能力，导出 `<键>.vk.json`，再用 `pack_game_shaders.py` 的打包函数写成包。原始流程做出的 6,927 个包与 biglawine 鸿蒙着色器流程做出的测试包逐字节相同；下述兼容修复会改变相关包，不再要求这些包与修复前字节相同（`dmsh_vk.py --compare <参考目录> <输出目录>`）。
 - **4 个是 main 程序本体内嵌的查询核**（`q_val0`、`q_val8`、`q_dlt0`、`q_dlt8`；Mac 与 iOS 用 `dm/gfx/nvn/nvn_builtin.h` 里的 MSL 版）。它们是手写的，能从源码做：`python3 dm/gfx/tools/pack_builtin_queries.py --output <新目录>` 用 `glslc`（NDK 的 `shader-tools/` 下就有）编译 `dm/gfx/vulkan/kernels/builtin_queries.comp`，写出这 4 个文件。
 
 一套包还可以附带 `vk-pipeline-list.seed`。首次启动、还没有 `files/dm/vk-pipeline-list.bin` 时，引擎在启动期间编好种子里列出的管线，种子覆盖的地方第一次去就不会因为现编管线而卡。`dm/android/tools/merge_warm_lists.py` 把几台设备的 `files/dm/vk-pipeline-list.bin` 合成一个种子。种子只能和录它时的那套包一起用，所以随包发放。实测见 `docs/android-notes/2026-10-22-first-play-stutter.zh-CN.md`。
@@ -126,3 +143,15 @@ DM_3D_SCALE_FLOOR=0.60
 ```
 
 同步仍开启；此文件不能覆盖同步、帧重叠或其他设置。解析器回归位于`dm/android/tests/test_debug_env.c`，可独立于游戏构建运行。
+
+## Adreno 兼容修复（2026-10-25）
+
+Vulkan 生成器只移除已证明未使用的末尾 `CullDistance` 成员，避免 8 个裁剪距离加 1 个无用剔除距离超过设备合计上限；发现实际使用时拒绝生成。已定位的流体累积着色器改用不依赖子组宽度的完整前缀计数与压缩算法，保持原描述符契约和流体计算。更新源码后必须重新生成私人着色器包。
+
+CPU 中有完整内容的 R16_UNORM 比较采样纹理，使用相同 UNORM16 数据建立 D16 别名，按现有设备能力选择是否拓宽为 D24。GPU 写入的颜色纹理或其他未支持的比较采样组合会明确报错。`DM_VK_VALIDATE=1` 为可选诊断，需要本地提供验证层；普通安装包不必携带验证层。
+
+6,927 个翻译着色器已通过 SPIR-V 校验。SM8550、SM8650 上的流体核均通过 16 组边界及随机掩码对照；SM8550 启动、营地、后台恢复未出现 Vulkan 验证错误。这不代表所有场景、特效或所有 Adreno 设备已验收。
+
+个人云存档的连接、冲突选择、历史恢复和服务维护见 [R2 服务说明](../../services/save-sync/README.zh-CN.md)。测试连接与测试存档目录相互隔离，不用于正式进度。
+
+Adreno 750 的驱动编译器还会在部分计算/片元模块的帮助函数形态上崩溃。`adreno_compat.py` 仅对核验过的 `6a7a308d61928982` 与 `00f1902d880682c7` 输入做标准 SPIR-V 优化，按原始 SHA-256 与描述符合同拒绝未知输入，并执行 Vulkan 1.1 校验。第二个模块覆盖空存档首次建角页；两个修复均从原始 Switch 着色器重生成，并与真机验证文件逐字节比对。没有跳过绘制或关闭效果。

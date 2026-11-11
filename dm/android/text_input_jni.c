@@ -117,6 +117,8 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *java_vm, void *reserved) {
         "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;III)V");
     report_failure = (*env)->GetStaticMethodID(env, activity_class, "showNativeFailure", "(I)V");
     if (!show_input || !report_failure) return JNI_ERR;
+    extern int dm_sync_android_init(JavaVM *, JNIEnv *);
+    if (dm_sync_android_init(java_vm, env)) return JNI_ERR;
     vm = java_vm;
     pthread_t worker;
     if (pthread_create(&worker, NULL, input_worker, NULL)) worker_state = -1;

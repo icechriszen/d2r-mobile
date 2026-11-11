@@ -1,3 +1,4 @@
+#include "../sync/dm_sync_ui.h"
 #include "dm_elysium.h"
 #include "dm_cursor.h"
 #include "dm_custom.h"
@@ -137,6 +138,7 @@ static int free_walk(uint64_t w, int dep, uint64_t base) {
 // skill binding box ButtonBindingModal...). Search from the top down for the first one; badge / indicator panels (save indicator SaveIndicatorPanel, mercenary portrait HireablesPanel, button legend...)
 // are not modal and do not block. With with_bind = 0 the skill binding box does not count (it has its own click handling and a dedicated cancel key)
 static uint64_t modal_any(uint64_t root, int with_bind, const char **name) {
+    uint64_t cloud=dm_sync_ui_modal(root);if(cloud){if(name)*name="TouchCS_Modal";return cloud;}
     uint64_t ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60); if (!ch || n > 256) return 0;
     for (int i = (int)n - 1; i >= 0; i--) { uint64_t p = *(uint64_t *)(ch + 8 * i); if (!p || !*(uint8_t *)(p + 0x50)) continue;
         const char *nm = (const char *)*(uint64_t *)(p + 8); size_t l = nm ? strlen(nm) : 0;
@@ -536,6 +538,12 @@ int dm_ui_touch_active(void) { return atomic_load(&g_ut_phase) != 0; }
 int dm_ui_fe_drag_ok(void) { return !atomic_load(&g_fe_del_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open); }
 static uint64_t ui_hash(const char *s) { uint64_t h = 0xcbf29ce484222325ull; for (; *s; s++) h = (h ^ (uint8_t)*s) * 0x100000001b3ull; return h; }
 static void ui_send_mouse_arg(module_t *m, uint64_t root, uint64_t act, int x, int y, int arg) {   // 负载 +4 / +8 = 光标，+0x10 = 滚轮量（120 一格）/ 键码（VK） | Payload +4 / +8 = cursor, +0x10 = wheel amount (120 per notch) / key code (VK)
+    if(dm_sync_ui_active()){
+        if(act==ui_hash("KeyDown")||act==ui_hash("KeyUp")){dm_sync_ui_key(arg,act==ui_hash("KeyDown"));return;}
+        uint64_t cloud=dm_sync_ui_modal(root);if(!cloud)return;
+        uint64_t hit=*(uint64_t*)(*(uint64_t*)cloud+0x48);
+        if(!(((int(*)(uint64_t,uint64_t))hit)(cloud,(uint64_t)(uint32_t)x|((uint64_t)(uint32_t)y<<32))&1))return;
+    }
     static uint64_t payload[16], msg[8];
     memset(payload, 0, sizeof payload); payload[0] = (uint64_t)(uint32_t)x << 32; payload[1] = (uint32_t)y; payload[2] = (uint32_t)arg;
     memset(msg, 0, sizeof msg); msg[0] = ui_hash("InputMessage"); msg[1] = act; msg[2] = (uint64_t)payload;
@@ -2758,6 +2766,7 @@ static int ui_touch_mode(void) { int dm_padmode_current(void), dm_padmode_busy(v
 #else
 #define UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh) do { } while (0)
 #endif
+static int has_character(const char *dir, int depth);
 void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线程）；每个出图帧做一次 | called where the game fetches the controller (hle_hid fill, main thread); done once per presented frame
     static uint64_t last_frame = UINT64_MAX; uint64_t fr = dm_guest_frame();
     if (fr == last_frame) return;
@@ -2851,6 +2860,11 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
             ((void (*)(uint64_t, int))(m->base + 0xc2cf24))(ws[i], 3); static int lg; if (lg++ < 12) LOG("前端路径：职业选择页改选 %s → 让出列中的 %s 归队", k_cc_class[hit], k_cc_class[i]); }
         if (pn && hit >= 0 && ws[hit] && *(int32_t *)(ws[hit] + 0x13f4) == 3) ((void (*)(uint64_t, int))(m->base + 0xc2cf24))(ws[hit], 0);   // 被点的这位还在归队途中：先回到待机，游戏才收这次点击 | the one tapped is still on its way back to the lineup: return it to idle first, and only then does the game accept this click
     }
+    // 空存档首页的触屏 Play 不能走原版“载入当前角色”（没有当前角色会空指针崩溃）。
+    // With empty saves, touch Play must create a character; the native load-current path dereferences a missing selection.
+    if (ph == 2) { int px=x,py=y; const char *sv=getenv("DM_SAVE");
+        if (sv && ui_snap(m,root,&px,&py)==1 && !strcmp(g_click_name,"QuickPlayButton") && !has_character(sv,0)) {
+            atomic_store(&g_ut_phase,0);fe_send("FrontEndNavigation","ToCharacterCreate","1");return; } }
     if (ph == 2 && ui_bind_modal_tap(root, x, y)) { int e = 2; atomic_compare_exchange_strong(&g_ut_phase, &e, 0); return; }
     if (ph == 2 && (dm_ui_panel_state() & DM_PS_VAULT)) { int dm_vault_ui_tap(int, int); if (dm_vault_ui_tap(x, y)) { int e = 2; atomic_compare_exchange_strong(&g_ut_phase, &e, 0); return; } }   // 编年史页的格子：单击说明 / 双击取出（dm_vault_ui.c），不发鼠标 | cells on the chronicle page: single tap for description / double-tap to take out (dm_vault_ui.c), no mouse event is sent
     if (ph == 2) {   // 合成钮（魔盒页 / 储藏箱魔盒格的 convert）：手上有物品时原版服务端直接丢掉这次合成（0x6e8740），先收进背包再按（兜底，守门之外再保一道） | transmute button (convert on the cube page / the stash cube cell): with an item in hand the original server simply drops this transmute (0x6e8740), so stow it into the inventory first and then press (a fallback, one more safeguard beyond the gatekeeping)
@@ -2893,17 +2907,17 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
           if (se && f - se < 30 && atomic_load(&g_close_down) && f - atomic_load(&g_close_down) < 60) {   /* 按下判类时记的「这一下落在 X 上」（点击这一拍「可点控件」查询认不出 X：mini 实测返回 0） | "this press landed on the X" recorded when classifying the press (on the click tick the "clickable widget" query does not recognize the X: measured on the second Mac, it returns 0) */ atomic_store(&g_speech_back_at, f + 12); LOG("界面鼠标：任务语音播着时点了 X → 随后按返回键关面板"); } } }
 }
 
-// ---------- 前端路径理顺（进 App 直接离线；没有存档直接到新建角色；有存档选角页当首页） ----------
+// ---------- 前端路径理顺（进 App 直接离线；没有存档保留主菜单；有存档选角页当首页） ----------
 // 界面消息观测回调里只记「要做什么」，真正的动作在游戏取手柄处（主线程、消息分发之外）做：
 //   · 教学提示框 TutorialTooltip（首次启动逐项弹，内容是手柄键位说明）：自动按 B = 跳过全部；
-//   · 主菜单按钮条出现：存档目录里没有角色 → 直接发 FrontEndNavigation:ToCharacterCreate（负载 "1" = 离线，抓「选择游戏模式 → 离线」那一下得到）；
+//   · 主菜单按钮条出现：存档目录里没有角色 → 留在主菜单以便连接云存档，点击开始才进入离线建角；
 //     有角色 → 自动按 X 打开选角页；
 //   · 建角的模式页 CharacterOptionsPanel：自动接受缺省；
 //   · 「选择游戏模式」OnlinePlayModeModal 若仍被打开（主菜单点了新角色）：同样直接走离线建角。
-// ---------- Front-end path streamlining (entering the App goes straight to offline; with no saves go straight to new character creation; with saves the character select page is the home page) ----------
+// ---------- Front-end path streamlining (entering the App goes straight to offline; with no saves retain the main menu; with saves the character select page is the home page) ----------
 // The UI message observation callback only records "what to do"; the actual actions are done where the game fetches the controller (main thread, outside message dispatch):
 //   - Tutorial tooltip box TutorialTooltip (popped up item by item on first launch, its content being controller button explanations): automatically press B = skip all;
-//   - Main menu button bar appears: no characters in the save directory → send FrontEndNavigation:ToCharacterCreate directly (payload "1" = offline, obtained by capturing the 「选择游戏模式 → 离线」(Select game modes → Offline) step);
+//   - Main menu button bar appears: no characters in the save directory → retain the main menu for cloud connection; Play explicitly opens offline character creation;
 //     characters exist → automatically press X to open the character select page;
 //   - Character creation mode page CharacterOptionsPanel: automatically accept the defaults;
 //   - If the 「选择游戏模式」(Select game modes) OnlinePlayModeModal still gets opened (new character tapped on the main menu): likewise go straight to offline character creation.
@@ -2965,6 +2979,7 @@ void dm_ui_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!strcmp(cat, "PanelManager")) ui_panel_note(act, arg ? arg : "");
     if (!strcmp(cat, "ChroniclePanelMessage") && !strcmp(act, "ToggleChildPanel") && arg && arg[0]) { int c = 0; while (c < 8 && g_chr_child[c][0] && strcmp(g_chr_child[c], arg)) c++; if (c < 8 && !g_chr_child[c][0]) strlcpy(g_chr_child[c], arg, sizeof g_chr_child[c]); }
     if (!strcmp(cat, "PanelManager") && arg && !strcmp(arg, "ChroniclePanel") && (!strcmp(act, "ClosePanel") || !strcmp(act, "UnloadPanel"))) atomic_store(&g_chr_closed, 1);
+    dm_sync_ui_on_message(cat,act,arg?arg:"");
     dm_custom_on_uimsg(cat, act, arg ? arg : "");
     if (act && !strcmp(act, "ControllerActionEnd")) atomic_store(&g_a_wait, 0);   // 等到「手柄动作结束」：拿起是在确认键松开被游戏处理时才发的（只等到「开始」就挪光标，背包 → 箱子的拿起包没发） | wait until "controller action end": the pick-up is only sent when the release of the confirm button is processed by the game (if the cursor is moved after waiting only for "start", the pick-up packet for inventory → stash is not sent)
     if (strcmp(cat, "InputMessage") && strcmp(cat, "MonsterHealth") && strcmp(cat, "PartyPanelMessage")) DM_LAT("ui %s %s %s", cat, act, arg ? arg : "");
@@ -3183,17 +3198,18 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
     // 手柄模式走原版自己的前端流程：下面这些「替玩家按键」都是给触屏定的，手柄模式下一律不做——
     // 线上（实体手柄）：主菜单按 X 开选角列表、A 选定后列表收起回主菜单（原版下一步是在主菜单按 A 开始游戏），我们「列表被收起就替按 X 重开」把玩家卡在选人这一步，
     // 一连重开 8 次、进不了游戏；界面每次重建后的「有存档 → 替按 X 开选角页」、教学提示自动 B、起名页自动 A / ＋ 同样会和玩家自己的按键抢。
-    // 只留不经按键、直接发原版消息的两条：一个角色都没有时直达建角、「选择游戏模式」直接走离线。攒下的待办标志清掉，不带回触屏模式
+    // 只留不经按键、直接发原版消息的两条：「选择游戏模式」直接走离线；空存档保留主菜单的设置入口。攒下的待办标志清掉，不带回触屏模式
     // Controller mode follows the original game's own front-end flow: the "key presses on the player's behalf" below were all designed for touch, and none of them are done in controller mode --
     // In released builds (physical controller): on the main menu X opens the character list, and after A selects, the list collapses back to the main menu (the original game's next step is pressing A on the main menu to start the game); our "list collapsed, so press X to reopen it" stuck the player at the character selection step,
     // reopening 8 times in a row with no way into the game; likewise "has a save → press X to open the character select page" after every UI rebuild, auto B on tutorial tips, and auto A / + on the naming page all fight with the player's own key presses.
-    // Only the two that go without key presses and send the original game's messages directly are kept: going straight to character creation when there is no character at all, and 「选择游戏模式」(Select game modes) going straight to offline. Accumulated pending flags are cleared and not carried back into touch mode
+    // Only 「选择游戏模式」(Select game modes) going straight to offline is kept; empty saves retain the main menu Settings entry. Accumulated pending flags are cleared and not carried back into touch mode
     { int dm_padmode_current(void);
       if (dm_padmode_current()) {
           atomic_store(&g_fe_skip_tut, 0); atomic_store(&g_fe_back, 0); atomic_store(&g_fe_options, 0); atomic_store(&g_fe_name, 0); atomic_store(&g_fe_name_done, 0);
           if (atomic_exchange(&g_fe_mode_modal, 0)) { atomic_store(&g_fe_menu, 0); fe_send("FrontEndNavigation", "ToCharacterCreate", "1"); next = fr + 8; return; }
-          if (atomic_exchange(&g_fe_menu, 0)) { const char *sv = getenv("DM_SAVE"); if (sv && !has_character(sv, 0)) { fe_send("FrontEndNavigation", "ToCharacterCreate", "1"); next = fr + 8; }
-              else { static int lg; if (lg++ < 6) LOG("前端路径：手柄模式，有存档 → 停在原版主菜单，不替玩家开选角页"); } }
+          // 空存档也保留主菜单：玩家需要从设置连接云存档，或重试首次下载。
+          // Keep the main menu even with no saves, so Settings remains reachable for cloud setup or download retries.
+          atomic_store(&g_fe_menu, 0);
           return; } }
     if (atomic_exchange(&g_fe_skip_tut, 0)) { fe_key(DM_BTN_B); next = fr + 8; LOG("前端路径：教学提示框 → 自动跳过（B）"); return; }
     if (atomic_exchange(&g_fe_back, 0)) { fe_key(DM_BTN_B); next = fr + 8; LOG("前端路径：模式页点了牌子以外 → 返回（B）"); return; }
@@ -3247,8 +3263,9 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
     }
     if (atomic_load(&g_fe_mode_modal)) { atomic_store(&g_fe_mode_modal, 0); atomic_store(&g_fe_menu, 0); fe_send("FrontEndNavigation", "ToCharacterCreate", "1"); next = fr + 8; return; }
     if (atomic_load(&g_fe_menu)) { atomic_store(&g_fe_menu, 0); const char *sv = getenv("DM_SAVE");
-        if (sv && !has_character(sv, 0)) fe_send("FrontEndNavigation", "ToCharacterCreate", "1");
-        else { fe_key(DM_BTN_X); LOG("前端路径：有存档 → 打开选角页（X）"); }
+        // 新设备没有角色时停在原版主菜单；「新角色」仍由玩家主动进入。
+        // Leave empty devices at the original main menu; New Character remains an explicit player action.
+        if (!sv || has_character(sv, 0)) { fe_key(DM_BTN_X); LOG("前端路径：有存档 → 打开选角页（X）"); }
         next = fr + 8; return; }
     // 列表被收起后（没有新的主菜单消息）：停在主菜单满 20 帧且没有别的弹窗 → 再开选角页
     // 列表收起不一定有 ClosePanel 消息（点列表行 = 选定并收起，只出 SelectCharacter）：直接读选角面板控件的可见位
@@ -3256,7 +3273,7 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
     // Collapsing the list does not necessarily produce a ClosePanel message (tapping a list row = select and collapse, only SelectCharacter is emitted): read the visible bit of the character select panel widget directly
     int ribbon = atomic_load(&g_fe_ribbon), list_vis = 0; if (ribbon) { module_t *m = main_module(); uint64_t root = 0; if (m) memcpy(&root, m->base + 0x2f05458, 8); uint64_t w = root ? ui_find(root, "CharacterSelectPanel", 0) : 0; list_vis = w && *(uint8_t *)(w + 0x50); }   // 只有停在主菜单时才用得到这一位；局内不找（局内没有这个面板，每帧都是整树比完） | this bit is only needed while sitting on the main menu; not searched in a run (this panel does not exist in a run, so every frame would compare the whole tree)
     static uint64_t bare; if (ribbon && !list_vis && !atomic_load(&g_fe_confirm_open)) { if (!bare) bare = fr; else if (fr - bare >= 20) { bare = 0; const char *sv = getenv("DM_SAVE"); if (!sv || has_character(sv, 0)) { fe_key(DM_BTN_X); next = fr + 30; LOG("前端路径：选角列表被收起 → 重新打开（X）"); }
-            else { atomic_store(&g_fe_ribbon, 0); fe_send("FrontEndNavigation", "ToCharacterCreate", "1"); next = fr + 30; LOG("前端路径：已没有角色（删掉了最后一个）→ 直达职业选择"); } } } else bare = 0;
+            else { atomic_store(&g_fe_ribbon, 0); next = fr + 30; LOG("前端路径：空存档 → 保留主菜单与设置入口"); } } } else bare = 0;
 }
 // ---------- 模式切换事务的登记项（dm_mode_items.h；游戏主线程，改布局之前调） ----------
 // 前端路径理顺与各处替按键：在途的请求全部作废。这些请求都是触摸点击排下的（点页签替按 L / R、点设置页按钮替按返回、点对话菜单行替按上下再确认…），

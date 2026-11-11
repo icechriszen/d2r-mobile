@@ -9,6 +9,7 @@
 // Register a new mode-specific behavior with one row here; do not check the mode separately elsewhere, and do not have the switch code call some module by name.
 //   X(name, side, enter, leave)   enter / leave: void (*)(void); write dm_mode_none (an empty function) when there is none
 #define DM_MODE_ITEMS(X) \
+    X("云存档界面输入", 2, dm_mode_none, dm_sync_ui_mode_leave) \
     X("符文之语清单", 2, dm_mode_none, dm_runeword_ui_rebuild) \
     X("前端路径理顺与替按键", 0, dm_mode_none, dm_ui_auto_mode_leave) \
     X("界面触摸缓存与挪位表", 2, dm_mode_none, dm_ui_cache_mode_leave) \

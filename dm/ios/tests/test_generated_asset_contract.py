@@ -162,11 +162,17 @@ class ModeCache(unittest.TestCase):
             self.assertFalse(gen_assets.ensure(str(self.romfs), overlay_only=True))
         self.assertEqual(self.calls, [True])
 
-    def test_each_mode_switch_regenerates_but_same_mode_reuses_cache(self):
+    def test_full_superset_survives_overlay_request_and_missing_full_output_regenerates(self):
         with mock.patch.object(gen_assets, 'run_steps', side_effect=self.fake_generate):
             self.assertTrue(gen_assets.ensure(str(self.romfs)))
             self.assertFalse(gen_assets.ensure(str(self.romfs)))
             full_stamp = (self.output / '.stamp').read_text()
+            self.assertFalse(gen_assets.ensure(str(self.romfs), overlay_only=True))
+            self.assertEqual(full_stamp, (self.output / '.stamp').read_text())
+            # A complete iOS cache must retain its skill silhouettes for an overlay-only caller.
+            silhouette = self.output / 'NativeHUD/v4/hud_v4_ui/sil_dm_native_skill_0.png'
+            self.assertTrue(silhouette.exists())
+            silhouette.unlink()
             self.assertTrue(gen_assets.ensure(str(self.romfs), overlay_only=True))
             overlay_stamp = (self.output / '.stamp').read_text()
             self.assertNotEqual(full_stamp, overlay_stamp)

@@ -22,6 +22,7 @@
 #include <jni.h>
 #include "vulkan_present.h"
 #include "touch_android.h"
+#include "../host/dm_input.h"
 #include "lifecycle_dispatch.h"
 #include "overlay_validate.h"
 #include "dm_overlay_contract.h"
@@ -114,6 +115,14 @@ static int link_romfs(const char *romfs) {
 }
 
 static void *host_thread(void *arg) {
+    extern int dm_r2_boot(void); dm_r2_boot();
+#ifdef DM_SYNC_TESTING
+    /* Test the actual Android vault, HTTPS, UI and disk transaction separately
+     * from device-specific GPU startup. Never enabled in a normal build. */
+    if(getenv("DM_SYNC_TEST")&&getenv("DM_SYNC_ONLY")){
+        extern void dm_r2_show(void);dm_r2_show();return NULL;
+    }
+#endif
     (void)arg;
     char out[1200]; snprintf(out, sizeof out, "%s/out", g_runtime);
     // 图形初始化在宿主线程进行；着色器由玩家在包外提供，失败时停止启动。
@@ -346,4 +355,19 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFocus(JNIEnv *env
         dm_lifecycle_post(&g_lifecycle, ev);
         __android_log_print(ANDROID_LOG_INFO, "dm-lifecycle", "UI posted event=%d", ev);
     }
+}
+
+// These callbacks run on the Android UI thread; only atomics/queued touch state cross into the guest.
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_GamepadInput_nativeState(JNIEnv *env, jclass cls,
+        jlong buttons, jint lx, jint ly, jint rx, jint ry, jint glyph, jboolean pad) {
+    (void)env; (void)cls;
+    dm_padmode_request_glyph(glyph);
+    dm_android_touch_controller(pad);
+    dm_pad_set((uint64_t)buttons & 0xffffu, lx, ly, rx, ry);
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_GamepadInput_nativeClear(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; dm_pad_clear();
+}
+JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeModeBusy(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; int dm_padmode_busy(void); return dm_padmode_busy() != 0;
 }

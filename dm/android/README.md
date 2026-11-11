@@ -21,6 +21,16 @@ player" below.
 - `compat/`: Android implementations of the host's Apple platform interfaces.
 - `tools/`: source-list parsing, ELF assembly conversion, and localized resources.
 
+## Physical controllers
+
+Standard Android USB/Bluetooth gamepads feed the shared host and upstream controller layout. A deliberate button press or stick movement switches to controller mode; release and press again after the layout transition. The first touch switches back to touch mode without also activating the game. Both sticks, D-pad keys/hat axes, digital/analog triggers, shoulders, stick clicks, Start and Select are supported. System Home is left to Android. Rumble is not implemented.
+
+Xbox/generic, PlayStation and Nintendo mappings follow the upstream glyph/function conventions. Sticks take control above 25%, return to zero below 15%, and must recenter after touch takes over. Per-device state prevents disconnecting one controller from releasing another controller's inputs. Focus loss clears held inputs and pending press edges; Android dialogs retain normal navigation.
+
+Run `GamepadStateTest.java` with `GamepadState.java` using `javac`/`java`; no Android device is needed for the state tests. On 2026-10-25 an 8BitDo Ultimate C Wired Controller (USB 2dc8:3017) was verified for gameplay, movement and buttons on the SM8550 modified device. Bluetooth, physical Sony/Nintendo devices, right-stick aiming and physical hotplug have not been separately verified.
+
+Personal cloud saves are documented in [the R2 service guide](../../services/save-sync/README.md). Test connections and test save directories are isolated from normal progress.
+
 ## Installing as a player
 
 The release page's `D2RMobile-android.apk` contains no game content (built by
@@ -128,7 +138,7 @@ locations, the c1 bytes, then the SPIR-V (`xbg_shader_header` in
   reading and writing storage images of unknown format are added, unused
   capabilities are trimmed, `<key>.vk.json` is exported, and the packing function
   of `pack_game_shaders.py` writes the bundle. The 6,927 bundles it makes are
-  byte-for-byte identical to the tested ones made with biglawine's HarmonyOS
+  before the compatibility transformations below, byte-for-byte identical to the tested ones made with biglawine's HarmonyOS
   shader pipeline (`dmsh_vk.py --compare <reference dir> <output dir>`).
 - **4 are the query kernels embedded in the main program** (`q_val0`,
   `q_val8`, `q_dlt0`, `q_dlt8`; Mac and iOS use the MSL versions in
@@ -205,3 +215,13 @@ DM_3D_SCALE_FLOOR=0.60
 ```
 
 Synchronization stays enabled. The file cannot override synchronization, frame overlap or any other setting. The parser regression is `dm/android/tests/test_debug_env.c`; build and run it independently from the game.
+
+## Adreno compatibility additions (2026-10-25)
+
+The Vulkan pack generator removes only a proven-unused trailing `CullDistance` member from the translated per-vertex interface, avoiding an 8-clip-plus-1-cull limit violation. Real cull use fails generation instead of being silently discarded. The single verified fluid accumulation shader uses a complete subgroup-independent prefix/compaction kernel with the original descriptor contract; it does not drop the effect. Rebuild the private shader pack after updating this source.
+
+CPU-backed R16_UNORM textures sampled with depth comparison receive a D16 alias containing the same UNORM16 values. The existing format capability path may widen D16 to D24. Unsupported GPU-written color/depth-comparison aliases fail explicitly. Optional `DM_VK_VALIDATE=1` requires a locally supplied validation layer; normal APKs do not need to bundle it.
+
+The 6,927 translated shaders passed SPIR-V validation. Fluid compaction/output checks passed 16 boundary/random masks on the SM8550 and SM8650 test devices. Startup, camp and background/resume on SM8550 produced no Vulkan validation errors. These results do not establish that every location/effect or every Adreno device has been tested.
+
+The Adreno 750 compiler also crashes on helper-function shapes in verified compute and fragment modules. `adreno_compat.py` applies standard SPIR-V optimization only to verified inputs `6a7a308d61928982` and `00f1902d880682c7`, enforcing original SHA-256 and descriptor contracts and Vulkan 1.1 validation. The latter covers the first empty-save character creation screen. Both were regenerated from original Switch packs and compared byte-for-byte with device-tested bundles. No draws or effects are skipped.

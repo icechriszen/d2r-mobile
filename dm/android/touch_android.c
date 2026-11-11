@@ -28,7 +28,9 @@ int dm_hud_stack_msg(const char *act, const char *arg);
 static int hud_blocked;
 static touch_event queue[256];
 static unsigned head, tail;
-static int ready, focused = 1, cancel, resizing, ui_drag;
+static int ready, focused = 1, cancel, resizing, ui_drag, controller_mode;
+int dm_padmode_busy(void);
+void dm_padmode_request(int pad);
 static float width = 800, height = 375, safe_left, safe_right, safe_bottom;
 static int tablet_layout, swap_above;
 typedef struct { int kind; float x,y; double time; uint64_t key; } direct_gesture;
@@ -100,6 +102,14 @@ void dm_android_touch_resize(float w, float h, float l, float r, float b) {
 void dm_android_touch_tablet(int tablet) {
     pthread_mutex_lock(&lock);
     tablet_layout = !!tablet; resizing = cancel = 1;
+    pthread_mutex_unlock(&lock);
+}
+void dm_android_touch_controller(int pad) {
+    pthread_mutex_lock(&lock);
+    if (controller_mode != !!pad) {
+        controller_mode = !!pad; cancel = 1; head = tail = 0;
+        dm_padmode_request(controller_mode);
+    }
     pthread_mutex_unlock(&lock);
 }
 void dm_android_touch_focus(int active) {
@@ -261,7 +271,23 @@ void dm_android_touch_step(uint64_t guest_now, uint64_t *buttons, int32_t *lx, i
         dm_ui_safe_right((int)lroundf(safe_right * 2160 / height));
         dm_tc_resize(&tc,width,height); resizing = 0;
     }
-    if (!focused) { pthread_mutex_unlock(&lock); return; }
+    if (!focused || controller_mode || dm_padmode_busy()) {
+        // The physical pad owns its cursor; touch hover/parking must not fight it.
+        static uint64_t previous;
+        static int portal_owned;
+        uint64_t b = *buttons;
+        if (focused && controller_mode && !dm_padmode_busy()) {
+            int dm_freetp_zr_free(int zl);
+            if ((b & DM_BTN_ZR) && !(previous & DM_BTN_ZR)) {
+                portal_owned = !tc.navigation_mode && dm_freetp_zr_free((b & DM_BTN_ZL) != 0);
+                if (portal_owned) dm_tp_request();
+            }
+            if (!(b & DM_BTN_ZR)) portal_owned = 0;
+            if (portal_owned) *buttons &= ~(uint64_t)DM_BTN_ZR;
+            previous = b;
+        } else { previous = 0; portal_owned = 0; }
+        pthread_mutex_unlock(&lock); return;
+    }
     sync_host();
     if (map_world_pending) {
         int result=dm_world_tap_result(map_world_seq);

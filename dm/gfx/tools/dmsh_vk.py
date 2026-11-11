@@ -11,6 +11,7 @@
 #   ④ 只在 DM_VK_INLINE_CS=1 时（缺省不做）：计算着色器里「非入口函数含子组指令」的，把辅助函数全部内联进入口（S24 Ultra / Adreno 750
 #     的高通驱动在这种结构上启动即崩）。只动计算着色器：像素着色器的 quad 改写器认 Ryujinx 的 SHFL 辅助函数调用形式，内联后 176 个就改不了了；
 #     计算着色器内联后 warp32 仍能改写（5 个里 5 个）。
+#   ⑤ 默认链为已核验的 6a7a308d61928982 运行标准优化以避开 Adreno 750 编译崩溃；显式内联模式沿用④。098a126f92bf533a 使用完整的流体兼容内核。
 # 绑定来源（贴图 / 采样器 / 存储缓冲槽、c0 / c2 驱动段、c1）与 dmsh_build.py 的 reflect() / decode_tex() 同一套解码。
 # 用法：dmsh_vk.py <Switch 包目录> <输出目录> [键…]     环境：XLATE（翻译器）、MAIN（main NSO）、J（并发）、SPIRV_OPT / SPIRV_VAL
 #       dmsh_vk.py --compare <参考 .xgs 目录> <本次输出目录>    逐个比字节：一致 / 不一致（不一致的再分 SPIR-V / 绑定表 / 其他）
@@ -26,6 +27,7 @@
 #   ④ Only with DM_VK_INLINE_CS=1 (off by default): compute shaders where a non-entry function contains subgroup instructions get every helper inlined into the entry point (the Qualcomm driver on the S24 Ultra / Adreno 750
 #     crashes at startup on that shape). Compute shaders only: the pixel shaders' quad rewriter matches Ryujinx's SHFL helper-call form, and 176 of them could no longer be rewritten after inlining;
 #     after inlining, warp32 still rewrites the compute shaders (5 of 5).
+#   ⑤ The default chain optimizes verified 6a7a308d61928982 to avoid the Adreno 750 compiler crash; explicit inline mode retains ④. 098a126f92bf533a uses the complete fluid compatibility kernel.
 # Binding sources (texture / sampler / storage buffer slots, the c0 / c2 driver banks, c1) use the same decoding as reflect() / decode_tex() in dmsh_build.py.
 # Usage: dmsh_vk.py <Switch package directory> <output directory> [keys...]     environment: XLATE (translator), MAIN (main NSO), J (parallelism), SPIRV_OPT / SPIRV_VAL
 #        dmsh_vk.py --compare <reference .xgs directory> <output directory>    compare byte by byte: identical / different (the different ones split into SPIR-V / binding table / other)
@@ -77,7 +79,7 @@ if len(sys.argv) > 1 and sys.argv[1] == '--compare':
     sys.exit(0 if compare(sys.argv[2], sys.argv[3]) else 1)
 
 dm_dir, out = sys.argv[1:3]; want = set(sys.argv[3:])
-sys.path.insert(0, HERE); import dmsh_facts, pack_game_shaders
+sys.path.insert(0, HERE); import dmsh_facts, pack_game_shaders, fluid_compat, spirv_compat, adreno_compat
 XLATE = os.environ.get('XLATE', f'{DM_ROOT}/build/gfx/dmsh_xlate/dmsh_xlate')
 MAIN = os.environ.get('MAIN', f'{DM_ROOT}/data/switch/3.3.94012/Update/ExeFS/main')
 MAP = os.path.join(HERE, '../nvn/shader_map.tsv')
@@ -127,7 +129,7 @@ def rewrite(spv, stage):
     w = list(struct.unpack('<%dI' % (len(spv) // 4), spv))
     for i, op, a in insts(w):
         if op == 71 and a[1] == 33: w[i + 3] = a[2] * 6 + STAGE_NO[stage]                       # OpDecorate … Binding
-    return struct.pack('<%dI' % len(w), *w)
+    return spirv_compat.remove_unused_cull_distance(struct.pack('<%dI' % len(w), *w))
 
 def add_format_caps(spv):
     """Ryujinx 对「未定格式」（Format = Unknown）的存储图像读写不声明 StorageImageRead/WriteWithoutFormat，spirv-val 不放行。
@@ -291,6 +293,10 @@ def one(key):
     json.dump(vk, open(os.path.join(bundle, key + '.vk.json'), 'w'), ensure_ascii=False)
     try: k2, data = pack_game_shaders.pack(__import__('pathlib').Path(os.path.join(bundle, key + '.vk.json')))
     except (ValueError, KeyError) as e: return key, '打包失败', str(e)[:160]
+    try:
+        data = fluid_compat.replace(k2, data)
+        if not INLINE_CS or k2 != adreno_compat.KEY: data = adreno_compat.replace(k2, data)
+    except (ValueError, subprocess.CalledProcessError) as e: return key, 'Vulkan compatibility failed', str(e)[:160]
     open(os.path.join(out, k2 + '.xgs'), 'wb').write(data)
     return key, 'ok', ''
 

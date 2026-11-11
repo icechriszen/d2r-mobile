@@ -16,6 +16,7 @@
 //   Stat point allocation: UI message CharacterStatsPanelMessage:UseSkillPoint, payload {i32 index (0 strength 1 dexterity 2 vitality 3 energy), i32 mode (2 = 1 point, 3 = 5 points, 1 = all)} (the same message sent by the stat plus widget 0xc4f704, handled by 0xc42858 → packet 0x3a).
 //   Skill point allocation: the skill tree button widget stores the click message -- [+0x558] category SkillsTreePanelMessage, [+0x568] → i32 skill id; send SkillsTreePanelMessage:UseSkillPoint {skill id} (handled by 0xc362ac → packet 0x3b);
 //            whether a point can be added = main+0xc368b0(skill id).
+#include "../sync/dm_sync_ui.h"
 #include "dm_prof.h"
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
@@ -802,7 +803,7 @@ void dm_actions_pump(void) {
                 while (l < 32 && sscanf(c, "%2x", &v) == 1 && c[0] != ';' && c[1] != ';' && c[1]) { q[n].pk[l++] = (uint8_t)v; c += 2; } q[n].len = l; n++; e = strchr(c, ';'); if (e) e++; } }
         uint64_t f = dm_guest_frame(); for (int i = 0; pl && i < n; i++) if (q[i].at && f >= q[i].at) { q[i].at = 0; ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(q[i].pk, q[i].len); LOG("测试 DM_TEST_C2S：帧 %llu 发包 %02x（长 %d）", (unsigned long long)f, q[i].pk[0], q[i].len); } }
     { void dm_freetp_client_step(uint8_t *, uint64_t); DM_PROF(0, "a.freetp_client", dm_freetp_client_step(b, pl)); }   // 免费回城：客户端玩家挂回城技能、读 ZR 那格空不空 | Free town portal: attach the town portal skill to the client player and read whether the ZR slot is empty
-    dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_kills_ui_pump(void); DM_PROF(0, "a.kills_ui", dm_kills_ui_pump()); } { void dm_rift_ui_pump(void); DM_PROF(0, "a.rift_ui", dm_rift_ui_pump()); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
+    dm_sync_ui_pump(root); dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_kills_ui_pump(void); DM_PROF(0, "a.kills_ui", dm_kills_ui_pump()); } { void dm_rift_ui_pump(void); DM_PROF(0, "a.rift_ui", dm_rift_ui_pump()); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
     uint32_t use = atomic_exchange(&g_use, 0); int force_merc = use ? atomic_exchange(&g_use_merc, 0) : 0;
     if (use && pl) { uint64_t it = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), use & 0x7f, use, 4);
         int busy = *(uint32_t *)(pl + 0xc) == 0x11 || ((uint64_t (*)(void))(b + 0x2aa7c0))() != 0, can = it && !busy && (((int (*)(uint64_t, int))(b + 0x3bff70))(it, 3) & 1);

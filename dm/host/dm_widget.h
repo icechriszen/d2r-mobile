@@ -11,6 +11,7 @@
 #include <string.h>
 
 enum {
+    DM_VT_LEGEND = 0x20b7a30,    // 原版前端按键提示条 | Native front-end button legend
     DM_VT_TEXT = 0x20ba4c8,      // 文字框：串 +0x88 / 长 +0x90，字色 +0xbc | text box: string +0x88 / length +0x90, text color +0xbc
     DM_VT_INPUT = 0x20b8718,     // 输入框：正式文字串 +0x558 | input box: committed text string +0x558
     DM_VT_NUMINPUT = 0x20b91c0,  // 数字输入框 | numeric input box

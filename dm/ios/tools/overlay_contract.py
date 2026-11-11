@@ -51,7 +51,7 @@ SOURCE_INPUTS = tuple(sorted((
     "dm/ios/tools/gen_romfs_overlay.py", "dm/ios/tools/gen_assets.py",
     "dm/ios/tools/gen_paths.py", "dm/ios/tools/gen_hud_v4.py",
     "dm/ios/tools/hud_v4_design.py", "dm/ios/tools/layout_patch.py",
-    "dm/ios/tools/touchrectv1_patch.json", "dm/ios/tools/touch_layout.py",
+    "dm/ios/tools/touchrectv1_patch.json", "dm/ios/tools/touch_layout.py", "dm/ios/tools/cloud_layout.py",
     "dm/ios/tools/touch_strings.py", "dm/ios/tools/romfs_art.py",
     "dm/ios/tools/dm_i18n.py", "dm/ios/tools/merc_slots.py",
     "dm/ios/tools/pouch_layout.py", "dm/ios/tools/wide_stash.py",

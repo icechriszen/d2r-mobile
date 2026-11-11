@@ -35,6 +35,7 @@
 #include "hle.h"
 #include "dm_hud.h"
 #include "dm_input.h"
+#include "dm_widget.h"
 #include "dm_i18n.h"
 #include "dm_modetx.h"
 #include "dm_mode_items.h"
@@ -337,6 +338,19 @@ static uint64_t legend_find(uint8_t *b, uint64_t lg, int act) {   // 提示条�
     return 0;
 }
 static int legend_ours(uint64_t e, const char *text) { size_t n = strlen(text); return rd8(e + 0x18) == n && !memcmp((const void *)(uintptr_t)rd8(e + 0x10), text, n); }
+// 独立云存档提示条走原版条目构造与重排；不改底下设置页的提示或状态。
+// Populate the separate cloud legend through native constructors, leaving the underlying settings legend/state intact.
+void dm_padmode_cloud_legend(uint64_t lg,int act,const char *text){
+    extern module_t g_mod[];extern int g_nmod;uint8_t *b=NULL;
+    for(int i=0;i<g_nmod;i++)if(!strcmp(g_mod[i].name,"main"))b=(uint8_t*)g_mod[i].base;
+    const char *name=lg?(const char*)(uintptr_t)rd8(lg+8):NULL;
+    if(!name||strcmp(name,"TouchCS_Legend")||!dm_widget_is(b,lg,DM_VT_LEGEND))return;
+    uint64_t old=legend_find(b,lg,act);if(old&&legend_ours(old,text))return;
+    uint64_t ent[8]={0};struct{const char *p;uint64_t n;}sv={text,strlen(text)};
+    ((void(*)(void*,int,int,void*))(b+0xaa9358))(ent,act,0,&sv);
+    ((void(*)(uint64_t,void*))(b+0xaa9ef4))(lg,ent);legend_free(b,ent);
+}
+
 // 鼠标点在按键提示条的某一条上 = 按它那个键（Mac App：手柄版布局里底部的「ⓧ 默认　ⓑ 关闭菜单」是提示、不是按钮，鼠标点它没有任何响应）。
 // 提示条控件（局内底部那条虚表 main+0x20b7960，前端各页的 main+0x20b7a30）自己画、没有子控件，读不到每一条的矩形：点落在控件里时按它的排法估——整排居中，每条 = 键帽 + 字，
 // 字宽按字数算（全角 1 个字宽、半角约半个），条与条之间留空。量自 1600×900 截图：字宽约屏高的 2.8%，键帽连间隔约 1.3 个字宽，条间约 0.4–0.95 个字宽（取 0.67）。

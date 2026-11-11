@@ -56,6 +56,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private SurfaceView view;
     private FrameLayout gameFrame;
     private TouchOverlay touchOverlay;
+    private GamepadInput gamepad;
+    private boolean swallowingPadTouch;
     private boolean started;
     private boolean importing;
     private boolean libraryLoaded;
@@ -64,6 +66,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
+        CloudSaves.init(this);
         // 调试包：am start … --ez dmArtDump true 只把触屏控件底图写到 files/dm/artdump/ 就退出（dm/android/tools/art_compare.sh 用）
         // Debug builds: am start … --ez dmArtDump true only writes the touch control art to files/dm/artdump/ and exits (used by dm/android/tools/art_compare.sh)
         if (BuildConfig.DEBUG && getIntent().getBooleanExtra("dmArtDump", false)) {
@@ -91,6 +94,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 资源在玩家放的位置读（缺省 Download/S2X/D2R Mobile/data），要「所有文件访问」权限；没有就引导去系统设置页，回来再启动
     // Resources are read where the player put them (default Download/S2X/D2R Mobile/data), which needs "all files access"; without it, guide the player to the system settings page and start after returning
     private boolean ensureFileAccess() {
+        // App-private imports need no shared-storage permission. This also lets
+        // isolated device tests run without granting access to unrelated files.
+        if (new File(getFilesDir(), "import/data").isDirectory()) return true;
         if (Environment.isExternalStorageManager()) return true;
         TextView t = new TextView(this);
         t.setText(R.string.dmAndroidPermission);
@@ -212,7 +218,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (bootFailure != 0) { showBootFailure(); return; }
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        if (!libraryLoaded && !ensureImported(new File(downloads, "S2X/D2R Mobile/android"))) return;
+        File privateImport = new File(getFilesDir(), "import");
+        boolean privateData = new File(privateImport,"data").isDirectory();
+        if (!libraryLoaded && !ensureImported(privateData ? new File(privateImport,"android") : new File(downloads, "S2X/D2R Mobile/android"))) return;
         if (gameFrame.getParent() == null) setContentView(gameFrame);
         if (!libraryLoaded) {
             // 与 jni_android.c 选运行目录同一条规则：内部目录有主程序就用内部目录，否则用外部私有目录
@@ -232,6 +240,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             for (int i = 0; i < gameIds.length; i++) gameLabels[i] = getString(gameIds[i]);
             for (int i = 0; i < navIds.length; i++) navLabels[i] = getString(navIds[i]);
             touchOverlay = new TouchOverlay(this, gameLabels, navLabels);
+            gamepad = new GamepadInput(this, pad -> touchOverlay.setControllerMode(pad));
             touchOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
                 android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.displayCutout());
                 touchOverlay.setSafeInsets(safe.left, safe.right, safe.bottom);
@@ -250,8 +259,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // The resource directory defaults to Download/S2X/D2R Mobile/data; when that directory does not exist but the earlier
         // Download/data does, the earlier one is kept, so existing installs need not move their data. The test is the directory,
         // not .build.config: the imported overlay can provide that file, and then the resource directory has none.
-        File data = new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
-        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
+        File data = privateData ? new File(privateImport,"data") : new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
+        if (!privateData && !data.isDirectory() && earlier.isDirectory()) data = earlier;
         String src = data.getAbsolutePath();
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag());
         if (result < 0) {
@@ -267,6 +276,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             showStartError(resource == 0 ? getString(R.string.dmAndroidStartFailed, result) : getString(resource)); return;
         }
         started = true;
+        gamepad.enable(resumed && hasWindowFocus());
         touchOverlay.setInputEnabled(true);
         nativeFocus(3);
     }
@@ -378,6 +388,26 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         dialog.show();
     }
 
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (started && resumed && hasWindowFocus() && inputDialog == null && gamepad != null && gamepad.key(event)) return true;
+        return super.dispatchKeyEvent(event);
+    }
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent event) {
+        if (started && resumed && hasWindowFocus() && inputDialog == null && gamepad != null && gamepad.motion(event)) return true;
+        return super.dispatchGenericMotionEvent(event);
+    }
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == android.view.MotionEvent.ACTION_DOWN) {
+            swallowingPadTouch = started && resumed && gamepad != null && gamepad.touch();
+        }
+        if (swallowingPadTouch) {
+            if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) swallowingPadTouch = false;
+            return true; // This whole gesture switches layout; it must not also attack/select.
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
     private void releaseTouches() {
         if (touchOverlay != null) touchOverlay.cancelTouches();
         if (started) nativeTouch(0, new int[0], new float[0], new float[0]);
@@ -389,12 +419,12 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
-    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
-    @Override protected void onPause() { resumed = false; if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); if (gamepad != null) gamepad.enable(hasWindowFocus()); updateRefresh(); if (started) { CloudSaves.command("foreground", ""); nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
+    @Override protected void onPause() { resumed = false; if (gamepad != null) gamepad.enable(false); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) { CloudSaves.command("background", ""); nativeFocus(0); } super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
-    @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
-    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else releaseTouches(); }
+    @Override protected void onDestroy() { if (gamepad != null) gamepad.close(); if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
+    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (gamepad != null) gamepad.enable(f && resumed); if (f) immersive(); else { swallowingPadTouch = false; releaseTouches(); } }
 
     @Override public void surfaceCreated(SurfaceHolder h) {}
     @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int ht) {
@@ -402,6 +432,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         updateRefresh();
         startHost();
     }
-    @Override public void surfaceDestroyed(SurfaceHolder h) { releaseTouches(); if (libraryLoaded) nativeSurface(null, 0, 0); }
+    @Override public void surfaceDestroyed(SurfaceHolder h) { if (gamepad != null) gamepad.enable(false); releaseTouches(); if (libraryLoaded) nativeSurface(null, 0, 0); }
 
 }

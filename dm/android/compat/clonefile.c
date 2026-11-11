@@ -38,7 +38,10 @@ static int copy_file(const char *src, const char *dst, mode_t mode) {
     if ((out = open(dst, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode & 0777)) < 0 || !(buf = malloc(1 << 16))) goto done;
     while ((k = read(in, buf, 1 << 16)) > 0)
         for (ssize_t w = 0; w < k;) { ssize_t z = write(out, buf + w, (size_t)(k - w)); if (z < 0) { if (errno == EINTR) continue; goto done; } w += z; }
-    if (k < 0 || fsync(out)) goto done;
+    struct stat saved;
+    if (k < 0 || fstat(in,&saved)) goto done;
+    struct timespec times[2]={saved.st_atim,saved.st_mtim};
+    if (futimens(out,times) || fsync(out)) goto done;
     rc = copy_xattrs(src, dst);
 done:
     { int e = errno; free(buf); if (out >= 0) close(out); close(in); errno = e; }
@@ -58,6 +61,7 @@ static int copy_tree(const char *src, const char *dst) {
         if (snprintf(a, PATH_MAX, "%s/%s", src, e->d_name) >= PATH_MAX || snprintf(b, PATH_MAX, "%s/%s", dst, e->d_name) >= PATH_MAX) { errno = ENAMETOOLONG; rc = -1; break; }
         rc = copy_tree(a, b);
     }
+    if(!rc){struct timespec times[2]={st.st_atim,st.st_mtim};rc=utimensat(AT_FDCWD,dst,times,AT_SYMLINK_NOFOLLOW);}
     { int e2 = errno; free(a); closedir(d); errno = e2; }
     return rc;
 }

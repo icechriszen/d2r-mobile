@@ -68,6 +68,7 @@ final class GamepadInput implements InputManager.InputDeviceListener {
         }
         return true;
     }
+    boolean controllerMode() { return state.controllerMode(); }
     boolean touch() { boolean was = state.controllerMode(); if (was) state.touched(); return was; }
     void enable(boolean on) { enabled = on; if (!on) { state.reset(); nativeClear(); } }
     void close() { enable(false); if (inputs != null) inputs.unregisterInputDeviceListener(this); }

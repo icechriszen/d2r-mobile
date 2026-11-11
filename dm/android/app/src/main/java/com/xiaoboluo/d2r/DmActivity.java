@@ -20,6 +20,8 @@ import android.text.SpanWatcher;
 import android.text.Spannable;
 import android.text.Spanned;
 import android.text.TextWatcher;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -28,6 +30,7 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import java.io.File;
@@ -39,7 +42,14 @@ import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener {
     static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang);
@@ -48,6 +58,29 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static native void nativeTouch(int n, int[] ids, float[] xs, float[] ys);
     static native void nativeFocus(int ev);
     static native void nativeTextResult(long id, boolean accepted, String text);
+    // 越肩镜头的体感转向（CamSensor）：开哪种传感器（0 = 不开），每次转动的弧度
+    // Sensor steering of the over-the-shoulder camera (CamSensor): which sensor to listen to (0 = none), each turn in radians
+    static native int nativeCamSensor();
+    static native void nativeCamTurn(float rad);
+    // 镜头档（nativeStart 之后才准）与「此刻在局里、镜头在出图」（CamButtons）
+    // The camera mode (valid only after nativeStart) and "in a game right now with the camera drawing" (CamButtons)
+    static native int nativeCamMode();
+    static native int nativeCamActive();
+    // 越肩档的操作风格（1 = 原神式：没有左右转按钮）
+    // The over-the-shoulder control style (1 = Genshin style: no turn buttons)
+    static native int nativeCamStyle();
+    // 拖技能键瞄准时地上那个环（CamThreats）：5 × 5 网格点，返回 25 = 正在瞄
+    // The ground ring while a skill button is dragged to aim (CamThreats): a 5 x 5 grid of points, returns 25 = aiming
+    static native int nativeCamAim(float[] out);
+    // 画面外的怪（CamThreats）：每条 5 个数，返回条数
+    // Monsters off the picture (CamThreats): 5 numbers each, returns the count
+    static native int nativeCamThreats(float[] out);
+    // 小地图上的朝向箭头（CamThreats）：4 个数，返回 1 = 该画
+    // Heading arrow on the minimap (CamThreats): 4 numbers, returns 1 = draw it
+    static native int nativeCamHeading(float[] out);
+    static native void nativePad(long buttons, int lx, int ly, int rx, int ry);
+    static native void nativePadMode(int pad);
+    static native void nativePadGlyph(int glyph);
 
     private static WeakReference<DmActivity> current = new WeakReference<>(null);
     private static volatile int bootFailure;
@@ -56,13 +89,14 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private SurfaceView view;
     private FrameLayout gameFrame;
     private TouchOverlay touchOverlay;
-    private GamepadInput gamepad;
-    private boolean swallowingPadTouch;
     private boolean started;
-    private boolean importing;
+    private boolean importing, savesTransferred;
     private boolean libraryLoaded;
     private boolean resumed;
     private DisplayManager displays;
+    private CamSensor camSensor;
+    private CamButtons camButtons;
+    private CamThreats camThreats;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -76,6 +110,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         current = new WeakReference<>(this);
         displays = getSystemService(DisplayManager.class);
         if (displays != null) displays.registerDisplayListener(this, null);
+        camSensor = new CamSensor(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         view = new SurfaceView(this);
@@ -89,6 +124,59 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private void immersive() {
         WindowInsetsController c = getWindow().getInsetsController();
         if (c != null) { c.hide(WindowInsets.Type.systemBars()); c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); }
+    }
+
+    // 实体手柄：按键与摇杆在 PadInput 里合成宿主的手柄状态（nativePad → dm_pad_set），与触屏的虚拟手柄在游戏取手柄时合并。
+    // 手柄事件在这里吃掉，不再往下传给视图（否则会触发触摸控件、系统返回等）。
+    // Physical controller: keys and sticks are merged in PadInput into the host controller state (nativePad -> dm_pad_set), combined with
+    // the touch stick when the game reads the controller. Controller events are consumed here and not passed on to the views.
+    // 原生库载入之前（导入进度页、「导入包版本不对」等启动错误页）手柄事件不进 PadInput：它要调原生方法，库还没载入就是
+    // UnsatisfiedLinkError，App 直接闪退（#178：装好新版、导入之前连上手柄就闪退）。这时交给系统，照普通界面处理
+    // Before the native library is loaded (the import progress page, start errors such as "the import pack is for another version"), controller
+    // events do not go to PadInput: it calls native methods, which throw UnsatisfiedLinkError while the library is not loaded and kill the app
+    // (#178: connecting a controller after installing a new version, before the import, crashed it). The system handles them as on any other screen
+    @Override public boolean dispatchKeyEvent(KeyEvent e) {
+        if (started && resumed && hasWindowFocus() && inputDialog == null && PadInput.onKey(e)) return true;
+        return super.dispatchKeyEvent(e);
+    }
+
+    @Override public boolean onGenericMotionEvent(MotionEvent e) {
+        if (started && resumed && hasWindowFocus() && inputDialog == null && PadInput.onMotion(e)) return true;
+        return super.onGenericMotionEvent(e);
+    }
+
+    // 手柄布局下碰屏 = 切回触屏布局，这一根手指整根不执行（此刻触控控件还没露出来，落点可能正好压在看不见的按钮上；
+    // iOS 的 front_ios.m 同样把这根手指吞掉）。之后的手指正常。
+    // Touching the screen in the controller layout = back to the touch layout, and that finger is swallowed for its whole life (the touch
+    // widgets are not shown yet and the landing point may sit on an invisible button; iOS front_ios.m swallows it the same way).
+    private final Set<Integer> swallowed = new HashSet<>();
+
+    @Override public boolean dispatchTouchEvent(MotionEvent e) {
+        int action = e.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            boolean wasPad = PadInput.isPadMode();
+            PadInput.onTouch();
+            if (wasPad) swallowed.add(e.getPointerId(0));
+        }
+        boolean swallowThis = false;
+        for (int i = 0; i < e.getPointerCount(); i++) if (swallowed.contains(e.getPointerId(i))) swallowThis = true;
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) swallowed.clear();
+        else if (action == MotionEvent.ACTION_POINTER_UP) swallowed.remove(e.getPointerId(e.getActionIndex()));
+        if (swallowThis) return true;
+        return super.dispatchTouchEvent(e);
+    }
+
+    // 手柄布局隐藏触控控件（iOS 由覆盖层的 _padMode 控制） | The controller layout hides the touch widgets (iOS does it through _padMode)
+    static void onPadMode(boolean pad) {
+        DmActivity a = current.get();
+        if (a == null) return;
+        a.applyPadMode(pad);
+    }
+
+    private void applyPadMode(boolean pad) {
+        if (touchOverlay == null) return;
+        touchOverlay.setInputEnabled(!pad);
+        touchOverlay.setVisibility(pad ? View.GONE : View.VISIBLE);
     }
 
     // 资源在玩家放的位置读（缺省 Download/S2X/D2R Mobile/data），要「所有文件访问」权限；没有就引导去系统设置页，回来再启动
@@ -116,6 +204,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // pack_info.txt last: if the app is killed or runs out of space, the next start imports again and half a copy is never used.
     // Done before the native library loads: in the release APK without game content, a few tables are read from derived.tsv at load time.
     private static final String[] IMPORT_ITEMS = {"out", "shaders", "overlay", "derived.tsv", "pack_info.txt"};
+    // 可有可无的导入项：走覆盖层的自定义开关的各组合（物品注释与旧译名，#191；jni_android.c 启动时按开关挑一份）。
+    // 旧导入包没有它，照常导入；新导入包没有它时，旧的那份删掉
+    // Optional import items: the overlays for custom switches that go through the overlay (item notes and old names, #191; jni_android.c picks one at start).
+    // Older import packs lack it and still import; when a new import pack lacks it, the old copy is removed
+    private static final String[] OPTIONAL_ITEMS = {"overlay_variants"};
 
     private static String readText(File f) {
         try { return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8); } catch (IOException e) { return null; }
@@ -164,23 +257,26 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
 
     private static void importPack(File source, File runtime, Progress progress) throws IOException {
         for (String item : IMPORT_ITEMS) if (!new File(source, item).exists()) throw new IOException("missing " + item);
+        List<String> items = new ArrayList<>(Arrays.asList(IMPORT_ITEMS));
+        for (String item : OPTIONAL_ITEMS) if (new File(source, item).exists()) items.add(item);
         File part = new File(runtime, "import.part");
         deleteTree(part);
         long sum = 0;
-        for (String item : IMPORT_ITEMS) sum += treeSize(new File(source, item));
+        for (String item : items) sum += treeSize(new File(source, item));
         final long total = sum;
         long[] done = {0}; int[] shown = {-1};
         byte[] buffer = new byte[1 << 20];
-        for (String item : IMPORT_ITEMS) copyTree(new File(source, item), new File(part, item), buffer, bytes -> {
+        for (String item : items) copyTree(new File(source, item), new File(part, item), buffer, bytes -> {
             done[0] += bytes;
             int p = (int) (done[0] * 100 / Math.max(1, total));
             if (p != shown[0]) { shown[0] = p; progress.percent(p); }
         });
-        for (String item : IMPORT_ITEMS) {
+        for (String item : items) {
             File from = new File(part, item), to = new File(runtime, item);
             deleteTree(to);
             if (!from.renameTo(to)) throw new IOException("rename " + item);
         }
+        for (String item : OPTIONAL_ITEMS) if (!items.contains(item)) deleteTree(new File(runtime, item));
         deleteTree(part);
     }
 
@@ -214,12 +310,35 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (f.exists() && !f.delete()) throw new IOException("delete " + f.getName());
     }
 
+    // 存档导出 / 导入（SaveTransfer）：游戏文件夹里放了 export 记号或 save-import 文件夹时，在原生库加载之前、每个进程做一次，结果用一条提示告诉玩家
+    // Save export / import (SaveTransfer): with an export marker or a save-import folder in the game folder, done once per process before the native
+    // library loads, and the result is told to the player in a toast
+    private void transferSaves(File game) {
+        String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+        for (SaveTransfer.Result r : SaveTransfer.run(game, new File(getFilesDir(), "save"), stamp, false)) {
+            String where = r.path == null ? null : "Download/S2X/D2R Mobile/" + r.path;
+            String text = switch (r.kind) {
+                case SaveTransfer.EXPORTED -> getString(R.string.dmAndroidSaveExported, where);
+                case SaveTransfer.EXPORT_EMPTY -> getString(R.string.dmAndroidSaveExportEmpty);
+                case SaveTransfer.IMPORTED -> r.path == null ? (r.skipped == null ? null : getString(R.string.dmAndroidSaveImportNothing, r.skipped))
+                    : r.skipped == null ? getString(R.string.dmAndroidSaveImported, r.path) : getString(R.string.dmAndroidSaveImportedSome, r.path, r.skipped);
+                case SaveTransfer.IMPORT_REJECTED -> getString(R.string.dmAndroidSaveImportRejected, r.path);
+                default -> getString(R.string.dmAndroidSaveTransferFailed, r.path);
+            };
+            android.util.Log.i("dm", "存档导出 / 导入：结果 " + r.kind + "，" + r.path + (r.skipped == null ? "" : "，已有没导：" + r.skipped) + (r.merge == SaveTransfer.MERGE_NONE ? "" : "，共享仓库并回 " + r.merge));
+            if (text != null) Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+            if (r.merge != SaveTransfer.MERGE_NONE)
+                Toast.makeText(this, getString(r.merge == SaveTransfer.MERGE_QUEUED ? R.string.dmAndroidSaveStashMerge : r.merge == SaveTransfer.MERGE_ALREADY ? R.string.dmAndroidSaveStashMerged : R.string.dmAndroidSaveStashSamePhone), Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void startHost() {
         if (bootFailure != 0) { showBootFailure(); return; }
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         File privateImport = new File(getFilesDir(), "import");
         boolean privateData = new File(privateImport,"data").isDirectory();
+        if (!libraryLoaded && !savesTransferred) { savesTransferred = true; transferSaves(privateData ? privateImport : new File(downloads,"S2X/D2R Mobile")); }
         if (!libraryLoaded && !ensureImported(privateData ? new File(privateImport,"android") : new File(downloads, "S2X/D2R Mobile/android"))) return;
         if (gameFrame.getParent() == null) setContentView(gameFrame);
         if (!libraryLoaded) {
@@ -240,12 +359,13 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             for (int i = 0; i < gameIds.length; i++) gameLabels[i] = getString(gameIds[i]);
             for (int i = 0; i < navIds.length; i++) navLabels[i] = getString(navIds[i]);
             touchOverlay = new TouchOverlay(this, gameLabels, navLabels);
-            gamepad = new GamepadInput(this, pad -> touchOverlay.setControllerMode(pad));
+            PadInput.init(this);
             touchOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
                 android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.displayCutout());
                 touchOverlay.setSafeInsets(safe.left, safe.right, safe.bottom);
                 return insets;
             });
+            if (BuildConfig.DEBUG && getIntent().getBooleanExtra("dmNoHud", false)) touchOverlay.setDebugNoHud(true);   // 调试包：量游戏自己的 HUD 时不画自绘层 | debug builds: no overlay drawing while measuring the game's own HUD
             gameFrame.addView(touchOverlay, new FrameLayout.LayoutParams(-1, -1));
             touchOverlay.requestApplyInsets();
         }
@@ -276,8 +396,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             showStartError(resource == 0 ? getString(R.string.dmAndroidStartFailed, result) : getString(resource)); return;
         }
         started = true;
-        gamepad.enable(resumed && hasWindowFocus());
-        touchOverlay.setInputEnabled(true);
+        PadInput.enable(resumed && hasWindowFocus());
+        applyPadMode(PadInput.isPadMode());
+        if (camSensor != null) camSensor.start(nativeCamSensor());
+        // 越肩镜头的左右转按钮：盖在触屏层上面，只收按钮上的触摸。镜头可以在局中从「自定义」页打开（dm_cam.c dm_cam_mode），所以总是加上：
+        // 镜头没在出图时按钮不画、触摸全部漏给下面的触屏层（nativeCamActive，每帧问一次）
+        // Turn buttons of the over-the-shoulder camera: above the touch layer, taking only touches on the buttons. The camera can be turned on mid-game from
+        // the Custom page (dm_cam.c dm_cam_mode), so they are always added: while the camera is not drawing the buttons are not drawn and every touch falls
+        // through to the touch layer below (nativeCamActive, asked every frame)
+        // 画面外的怪的箭头与地图上的朝向箭头放在按钮下面一层：只画不收触摸，镜头关着时什么都不画
+        // The off-picture monster arrows and the map heading arrow go one layer below the buttons: drawing only, no touches, nothing drawn while the camera is off
+        if (camButtons == null) {
+            camThreats = new CamThreats(this); gameFrame.addView(camThreats, new FrameLayout.LayoutParams(-1, -1));
+            camButtons = new CamButtons(this); gameFrame.addView(camButtons, new FrameLayout.LayoutParams(-1, -1)); }
+        if (camButtons != null) camButtons.start();
+        if (camThreats != null) camThreats.start();
         nativeFocus(3);
     }
 
@@ -388,26 +521,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         dialog.show();
     }
 
-    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
-        if (started && resumed && hasWindowFocus() && inputDialog == null && gamepad != null && gamepad.key(event)) return true;
-        return super.dispatchKeyEvent(event);
-    }
-    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent event) {
-        if (started && resumed && hasWindowFocus() && inputDialog == null && gamepad != null && gamepad.motion(event)) return true;
-        return super.dispatchGenericMotionEvent(event);
-    }
-    @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
-        int action = event.getActionMasked();
-        if (action == android.view.MotionEvent.ACTION_DOWN) {
-            swallowingPadTouch = started && resumed && gamepad != null && gamepad.touch();
-        }
-        if (swallowingPadTouch) {
-            if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) swallowingPadTouch = false;
-            return true; // This whole gesture switches layout; it must not also attack/select.
-        }
-        return super.dispatchTouchEvent(event);
-    }
-
     private void releaseTouches() {
         if (touchOverlay != null) touchOverlay.cancelTouches();
         if (started) nativeTouch(0, new int[0], new float[0], new float[0]);
@@ -419,19 +532,20 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
-    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); if (gamepad != null) gamepad.enable(hasWindowFocus()); updateRefresh(); if (started) { CloudSaves.command("foreground", ""); nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
-    @Override protected void onPause() { resumed = false; if (gamepad != null) gamepad.enable(false); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) { CloudSaves.command("background", ""); nativeFocus(0); } super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); PadInput.enable(hasWindowFocus()); updateRefresh(); if (started) { CloudSaves.command("foreground", ""); nativeFocus(3); if (touchOverlay != null && bootFailure == 0) applyPadMode(PadInput.isPadMode()); if (camSensor != null) camSensor.start(nativeCamSensor()); if (camButtons != null) camButtons.start(); if (camThreats != null) camThreats.start(); } }
+    @Override protected void onPause() { resumed = false; if (camSensor != null) camSensor.stop(); if (camButtons != null) camButtons.stop(); if (camThreats != null) camThreats.stop(); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); PadInput.reset(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) { CloudSaves.command("background", ""); nativeFocus(0); } super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
-    @Override protected void onDestroy() { if (gamepad != null) gamepad.close(); if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
-    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (gamepad != null) gamepad.enable(f && resumed); if (f) immersive(); else { swallowingPadTouch = false; releaseTouches(); } }
+    @Override protected void onDestroy() { PadInput.close(); if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
+    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); PadInput.enable(f && resumed); if (f) immersive(); else { swallowed.clear(); releaseTouches(); } }
 
     @Override public void surfaceCreated(SurfaceHolder h) {}
     @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int ht) {
         if (libraryLoaded) nativeSurface(h.getSurface(), w, ht);
+        if (started) PadInput.enable(resumed && hasWindowFocus());
         updateRefresh();
         startHost();
     }
-    @Override public void surfaceDestroyed(SurfaceHolder h) { if (gamepad != null) gamepad.enable(false); releaseTouches(); if (libraryLoaded) nativeSurface(null, 0, 0); }
+    @Override public void surfaceDestroyed(SurfaceHolder h) { PadInput.reset(); releaseTouches(); if (libraryLoaded) nativeSurface(null, 0, 0); }
 
 }

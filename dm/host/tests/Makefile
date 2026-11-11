@@ -3,6 +3,7 @@ DM_ROOT ?= $(HOME)/dm-work
 # dm/host unit tests in one command: make -C dm/host/tests run (takes seconds; build output goes to build/ and is not committed)
 PY ?= $(DM_ROOT)/build/cache/dm/venv/bin/python
 EXEFS ?= $(DM_ROOT)/data/switch/3.3.94012/Update/ExeFS
+ROMFS ?= $(or $(DM_ROMFS_SRC),$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS)
 B = build
 MOVIE_PACKAGES = libavformat libavcodec libavutil libswscale
 MOVIE_TEST_FLAGS ?= -O1
@@ -18,6 +19,7 @@ run: \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
+	$(B)/t_crash_hang \
 	$(B)/t_doorspot \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
@@ -25,6 +27,7 @@ run: \
 	$(B)/t_hid_script \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
+	$(B)/t_legend \
 	$(B)/t_minimap_lift \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
@@ -34,6 +37,7 @@ run: \
 	$(B)/t_oe \
 	$(B)/t_padmap \
 	$(B)/t_rift_clock \
+	$(B)/t_rift_hud \
 	$(B)/t_rift_next \
 	$(B)/t_rift_oldrun \
 	$(B)/t_rift_wave \
@@ -49,18 +53,24 @@ run: \
 	$(B)/t_thread_leak \
 	$(B)/t_touch \
 	$(B)/t_touch_mac \
+	$(B)/t_ui_move \
 	$(B)/t_unit_level \
+	$(B)/t_vault_icons \
+	$(B)/t_widestash_restore \
+	$(B)/t_freetp_zr \
 	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
 	python3 ../../ios/tools/dm_i18n.py --check
 	python3 ../../i18n/scan_literals.py
+	python3 ../../tools/tests/test_warm_seed.py
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
 	$(B)/t_mac_overlay
 	$(PY) test_mac_features.py
 	$(B)/t_rift_clock
+	$(B)/t_rift_hud
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
 	$(B)/t_interaction_diag
@@ -82,6 +92,7 @@ run: \
 	$(B)/t_audio_spsc
 	$(B)/t_swkbd
 	$(B)/t_altstack
+	$(B)/t_crash_hang
 	$(B)/t_movie
 	$(B)/t_condvar
 	$(B)/t_condvar_old
@@ -89,13 +100,18 @@ run: \
 	$(B)/t_hud_dead
 	$(B)/t_namegen
 	$(B)/t_minimap_lift
+	$(B)/t_widestash_restore
+	$(B)/t_freetp_zr
 	$(B)/t_modetx
+	$(B)/t_ui_move
+	$(B)/t_legend
+	$(B)/t_vault_icons
 	$(B)/t_padmap
 	$(B)/t_unit_level
 	$(B)/t_widget
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
-	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
+	for m in en zh none sysen syses systw sysru sysko syspt tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
 $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
@@ -118,6 +134,10 @@ $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_padmap.c
 $(B)/t_minimap_lift: t_minimap_lift.c t_sync_ui_stub.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_minimap_lift.c t_sync_ui_stub.c
+$(B)/t_widestash_restore: t_widestash_restore.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_widestash_restore.c
+$(B)/t_freetp_zr: t_freetp_zr.c ../dm_freetp.c ../hle.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_freetp_zr.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
@@ -144,6 +164,11 @@ movie-real: $(B)/t_movie_real
 	$(PY) movie_real.py $(B)/t_movie_real
 $(B)/t_altstack: t_altstack.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_altstack.c t_altstack_stub.c ../crash.c
+# 崩溃处理不会把崩溃变成卡死（3 秒闹钟、第一段信号安全）；安卓同一份可用 NDK 静态编（-DDM_STATIC_TEST）在电脑上经 qemu 跑
+# The crash handler never turns a crash into a hang (3-second alarm, signal-safe first part); the same file builds for Android with the NDK statically
+# (-DDM_STATIC_TEST) and runs on a PC through qemu
+$(B)/t_crash_hang: t_crash_hang.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_crash_hang.c t_altstack_stub.c ../crash.c
 $(B)/%.orig.bin: $(EXEFS)/% | $(B)
 	$(PY) ../../tools/nso.py $< $@ > /dev/null
 $(B):
@@ -198,3 +223,17 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle.c
+
+$(B)/t_rift_hud: t_rift_hud.m ../../ios/Sources/dm_rift_hud.m ../../ios/Sources/dm_rift_hud.h ../dm_rift.h | $(B)
+	clang -O1 -Wall -Werror -Wno-deprecated-declarations -fobjc-arc -I.. -framework Cocoa -framework QuartzCore -framework CoreText -o $@ t_rift_hud.m ../../ios/Sources/dm_rift_hud.m
+
+$(B)/t_ui_move: t_ui_move.c ../dm_cursor.c $(wildcard ../*.h) | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -o $@ t_ui_move.c
+$(B)/t_legend: t_legend.c ../dm_padmode.c $(wildcard ../*.h) | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -o $@ t_legend.c
+$(B)/t_vault_icons: t_vault_icons.c ../dm_vault_ui.c ../dm_vault_tab.h $(wildcard ../*.h) | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -o $@ t_vault_icons.c
+# 新检出尚无仓库表头时，复用宿主生成规则，只读玩家本机的游戏文件，生成物不入库。
+# On a fresh checkout, reuse the host generator with the player's local game files; generated output stays untracked.
+../dm_vault_tab.h: ../../ios/tools/gen_vault_table.py
+	$(MAKE) -C .. dm_vault_tab.h DM_ROOT="$(DM_ROOT)" ROMFS="$(ROMFS)"

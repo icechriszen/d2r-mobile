@@ -26,7 +26,7 @@ Platforms: iPhone / iPad (iOS 26 and later; iOS 18 – 25 with the older-API bui
 
 - The game's own aarch64 program, **executing directly on the device**, with no emulated CPU. iPhone and Switch use the same class of processor; only the handful of instructions that cannot run unchanged under Apple's kernel are rewritten, and every other byte of the program is left exactly as shipped. Every class, every Runeword, Terror Zones, bosses, drop rules and quest flow are identical to the original.
 - The platform services the game expects — system calls, the file system, the graphics API, audio, input — provided by a small host written for Apple platforms. The graphics API is reimplemented entirely — on Metal on Apple devices, on Vulkan on Android — with no emulation layer in between, and the shaders are translated offline from the game's originals.
-- A port built for phones, and taken all the way: a complete touch control scheme, edge-to-edge iPhone and true full-screen iPad display, controller support, a power saver mode, save sync, five languages (English, Chinese, Spanish, Russian and Korean), and a whole set of endgame modes and quality-of-life features the original never had.
+- A port built for phones, and taken all the way: a complete touch control scheme, edge-to-edge iPhone and true full-screen iPad display, controller support, a power saver mode, save sync, six languages (English, Chinese, Spanish, Russian, Korean and Portuguese), and a whole set of endgame modes and quality-of-life features the original never had.
 
 **It is not:**
 
@@ -146,9 +146,10 @@ Enter through the red portal in Harrogath after completing Hell. There are 100 l
 | Auto-pickup | Low runes and gems go straight into the Pouch; the high ones are left for you to pick up yourself |
 | Valuable drop alerts | High runes and Unique items raise a light beam and land with a different drop sound; the phone vibrates at one of three strengths — light, medium or heavy — according to value |
 | Runeword helper | Long-press a socketed base to list the Runewords it can make and their stats; once you have the runes, socket them all in one tap |
-| Minimap guidance | Every map marks its Waypoint and exits; every quest goal is on the map; when a target is off screen, its name is written along the screen edge |
-| Chores removed | Free identification, free Town Portal with no scrolls needed, spawning right beside the Waypoint, Quick Restart, refreshable vendor stock |
+| Minimap guidance | Every map marks its Waypoint and exits, labelled "Waypoint" and with the name of the area each entrance leads to (iOS / Mac); every quest goal is on the map; when a target is off screen, its name is written along the screen edge |
+| Chores removed | Free identification, free Town Portal with no scrolls needed, spawning right beside the Waypoint, Quick Restart, refreshable vendor stock, free and unlimited respecs at Akara |
 | Saves | Saved immediately when you switch apps, swipe the app away or quit; iCloud sync across devices (requires signing with a paid developer account) |
+| Entertainment mode (experimental) | Over-the-shoulder and first-person camera: drag the right half to look around, arrows for monsters off the picture, a facing pointer on the map ([details](docs/over-the-shoulder-camera.md); contributed with [@yyan160](https://github.com/yyan160), [#165](https://github.com/jhaizhou-ops/d2r-mobile/pull/165)) |
 
 Most features can be toggled one by one in game under Options → Custom.
 
@@ -158,9 +159,9 @@ Most features can be toggled one by one in game under Options → Custom.
   <img src="https://github.com/jhaizhou-ops/d2r-mobile/releases/download/assets/en_map.jpg" width="33%" alt="The full-screen map">
 </p>
 
-### English, Chinese, Spanish, Russian and Korean
+### English, Chinese, Spanish, Russian, Korean and Portuguese
 
-The whole game switches between English, Chinese, Spanish, Russian and Korean under Options → Custom; after a restart, the interface is in the language you chose. On first launch it follows your device language (Spanish from Spain uses the game's esES text, other Spanish regions use the Latin American esMX text). In English, Spanish, Russian and Korean, items, skills and monsters use the original Diablo II wording, and everything we added — Greater Rift, Chronicle, the settings page, gesture prompts, map name plates — is translated too (item notes are translated for Chinese and Spanish only). Russian is the game's single ruRU text and Korean its koKR text, with no regional variants. Voice acting: Chinese UI gets Chinese voices; Russian and Korean get the original Russian or Korean voices when your game files include them (a package built from the complete game data does), otherwise English; everything else is English. Korean was contributed by [@soulsakura](https://github.com/soulsakura) ([#118](https://github.com/jhaizhou-ops/d2r-mobile/pull/118)).
+The whole game switches between English, Chinese, Spanish, Russian, Korean and Portuguese under Options → Custom (six options in two rows of three); after a restart, the interface is in the language you chose. On first launch it follows your device language (Spanish from Spain uses the game's esES text, other Spanish regions use the Latin American esMX text; Portuguese uses the game's ptBR text). In English, Spanish, Russian, Korean and Portuguese, items, skills and monsters use the original Diablo II wording, and everything we added — Greater Rift, Chronicle, the settings page, gesture prompts, map name plates — is translated too (item notes are translated for Chinese and Spanish only). Russian is the game's single ruRU text, Korean its koKR text and Portuguese its ptBR (Brazilian) text, with no regional variants. Voice acting: Chinese UI gets Chinese voices; Russian, Korean and Portuguese get the original voices when your game files include them (a package built from the complete game data does), otherwise English; everything else is English. Korean was contributed by [@soulsakura](https://github.com/soulsakura) ([#118](https://github.com/jhaizhou-ops/d2r-mobile/pull/118)).
 
 <p align="center">
   <img src="https://github.com/jhaizhou-ops/d2r-mobile/releases/download/assets/en_game.jpg" width="58%" alt="Gameplay with the English interface">

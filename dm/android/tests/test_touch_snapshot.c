@@ -43,6 +43,8 @@ uint64_t now_ns(void) { return test_clock_ns; }
 uint64_t dm_input_samples(void) { return test_sample; }
 void dm_cursor_clear(void) {}
 int dm_cursor_pending(void) { return 0; }
+int dm_padmode_busy(void) { return 0; }
+int dm_freetp_zr_free(int zl) { (void)zl; return 0; }
 void dm_ui_hand_idle(int idle) { (void)idle; }
 int dm_ui_panel_state(void) { return 0; }
 int dm_ui_tap_box(void) { return 0; }

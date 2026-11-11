@@ -4,19 +4,21 @@
 
 Protocol 1, shared with `dm/sync`, supports game 1.0.34.0 / saves 3.3.94012. Complete gameplay snapshots include characters, stashes and expansion progress; graphics and touch settings stay on each device. The owner administers deployment and device connections.
 
+For the complete step-by-step deployment, per-device setup, revocation and maintenance walkthrough, see [the Chinese setup guide](README.zh-CN.md). No maintainer service credentials are included.
+
 ## Deployment and device access
 
-Use the locked Node/npm dependencies and Wrangler in this directory:
+Use Node.js 22 or a newer version supported by the locked Wrangler package. Copy `wrangler.jsonc` to ignored `wrangler.local.jsonc`, set your own Worker and private bucket names, and consistently pass `--config wrangler.local.jsonc` to deploy/device commands. The names below are examples; replace the hostname and private directory with your own:
 
 ```sh
 npm ci
 npx wrangler login
 npx wrangler r2 bucket create d2r-private-saves
-npm run deploy
-npm run devices -- add iPhone https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json
-npm run devices -- add Android https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json
-npm run devices -- add Mac https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json
-npm run devices -- publish --registry /PRIVATE/devices.json
+npm run deploy -- --config wrangler.local.jsonc
+npm run devices -- add iPhone https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json --config wrangler.local.jsonc
+npm run devices -- add Android https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json --config wrangler.local.jsonc
+npm run devices -- add Mac https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json --config wrangler.local.jsonc
+npm run devices -- publish --registry /PRIVATE/devices.json --config wrangler.local.jsonc
 ```
 
 Bind `SAVES` to the dedicated private bucket in `wrangler.jsonc`. Keep public access disabled. Use the deployed HTTPS origin. Tests require a separate bucket, `wrangler.test.jsonc`, tokens and saves; registration also takes `--test --config wrangler.test.jsonc`.
@@ -75,3 +77,5 @@ Test type checks, core tests and real-service behavior before deploying changes.
 Build/download/core-test success does not constitute three-platform acceptance. Real-device records must also cover game reads/writes, conflicts, restoration and the full iPhone → Android → Mac → iPhone loop.
 
 Device onboarding also accepts a local `cloud-connection.json` beside the save directory. The mobile UI asks before connecting, validates at most 4 KiB without following links, verifies the secure-store readback, then removes the plaintext. Test and normal credentials remain isolated. Cloud Saves is now the first row of Custom settings and supports controller selection. A new Android device whose first network check times out gets a visible retry page.
+
+Real-service synthetic tests require an empty, isolated Worker and an explicit origin pin: `DM_TEST_WORKER_ORIGIN=https://YOUR-TEST-WORKER.YOUR-SUBDOMAIN.workers.dev npx tsx tools/remote-test.ts /PRIVATE/TEST/connection.txt`. The connection must carry `test:true`; never run it on gameplay or production progress.

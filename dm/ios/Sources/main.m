@@ -1238,6 +1238,25 @@ static void bg_relaunch_test(void) {
 @end
 
 int main(int argc, char *argv[]) {
+#if defined(DM_SYNC_TESTING) && defined(DM_SYNC_FORCE_ISOLATED)
+    /* Temporary same-identifier device tests when free signing slots are full.
+     * Enforce isolation even when launched from the Home Screen. Production
+     * builds do not compile this path; never select the normal credential slot. */
+    setenv("DM_SYNC_TEST", "1", 1);
+    setenv("DM_SAVE_TEST", "1", 1);
+    setenv("DM_TEST_ICLOUD_OFF", "1", 1);
+    unsetenv("DM_SAVE_FRESH");
+    unsetenv("DM_SYNC_CONNECTION");
+    unsetenv("DM_SYNC_IMPORT");
+    @autoreleasepool {
+        NSString *testDoc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+        NSString *connection = [testDoc stringByAppendingPathComponent:@"merge-test-connection.json"];
+        if (access(connection.fileSystemRepresentation, R_OK) == 0) {
+            setenv("DM_SYNC_CONNECTION", connection.fileSystemRepresentation, 1);
+            setenv("DM_SYNC_IMPORT", "1", 1);
+        }
+    }
+#endif
     g_T[2] = since_start();
     // 文件描述符上限：iOS 进程缺省软上限 256，而游戏进局后常开约 255 个（数据文件、存档、日志、Metal 缓存…），差一个就满——
     // 满了以后任何 open 都失败：存档读不出（首页变成建角页）、Documents 里的文件读不到（NSPOSIXErrorDomain 24 Too many open files）。

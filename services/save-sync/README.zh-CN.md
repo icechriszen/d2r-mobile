@@ -4,39 +4,84 @@ English: [README.md](README.md)
 
 与 `dm/sync` 共用协议 1，当前支持游戏 1.0.34.0 / 存档 3.3.94012。服务只保存整套玩法存档，不保存游戏资源或画质、触控设置。部署、设备注册表和连接码均由个人管理员维护。
 
-## 部署
+## 从零配置自己的跨平台服务
 
-需要当前项目锁定的 Node、npm 和 Wrangler。先登录自己的 Cloudflare 账号，在本目录运行：
+### 1. 准备私有桶和本地配置
+
+准备自己的 Cloudflare 账号并启用 R2，以及 Node.js 22 或更新的受 Wrangler 支持版本。以下命令在 `services/save-sync` 目录运行。仓库仅提供通用配置示例，不提供维护者的服务、设备令牌或管理密钥。
 
 ```sh
 npm ci
 npx wrangler login
-npx wrangler r2 bucket create d2r-private-saves
-npm run deploy
+cp wrangler.jsonc wrangler.local.jsonc
 ```
 
-`wrangler.jsonc` 的 `SAVES` 绑定必须指向专用私有桶。不要启用桶的公共访问。服务地址采用部署输出的 HTTPS 地址。测试必须使用 `wrangler.test.jsonc` 和独立桶，不可复用正式令牌或正式存档。
-
-为每台设备单独生成连接码，注册表和连接码放在仓库外的私人目录：
+编辑 **`wrangler.local.jsonc`**：将 `name` 改为你自己的 Worker 名，例如 `my-d2r-saves`；将 `r2_buckets[0].bucket_name` 改为你自己的桶名，例如 `my-d2r-private-saves`。保留绑定名 `SAVES`、`main`、`compatibility_date` 和清理计划。该本地文件已忽略，不要提交到 Git。若账号下有多个 Cloudflare 账户，按 Wrangler 提示选择你创建 R2 桶的账户。
 
 ```sh
-npm run devices -- add iPhone https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json
-npm run devices -- add Android https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json
-npm run devices -- add Mac https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev --registry /PRIVATE/devices.json
-npm run devices -- publish --registry /PRIVATE/devices.json
+npx wrangler r2 bucket create my-d2r-private-saves
+npm run deploy -- --config wrangler.local.jsonc
 ```
 
-工具只显示连接文件路径和设备编号。连接码是完整 JSON，含服务地址、设备编号和随机访问令牌；复制文件内容到游戏“云存档 → 连接设备”。任何获得连接码的人都能访问该个人服务的存档，因此不要提交到 Git、发送到公开聊天或放进安装包。Worker 的 `DEVICES` secret 只含令牌摘要；客户端不包含 Cloudflare 管理凭据。
+不要启用 R2 桶的 `r2.dev` 或公共自定义域名。游戏只访问 Worker，不直连 R2。记录部署输出的 HTTPS 地址，下面的 `YOUR-WORKER.YOUR-SUBDOMAIN` 必须替换成自己的地址。无需创建 S3 Access Key，也无需把 Cloudflare API Token 编进应用。Wrangler 登录凭据只用于本机管理服务。
 
-撤销丢失设备：
+### 2. 为每台设备生成独立连接文件
+
+在仓库外建立私人目录，注册表保存设备编号、名称和令牌摘要；每份连接文件另含该设备的随机令牌。
 
 ```sh
-npm run devices -- list --registry /PRIVATE/devices.json
-npm run devices -- revoke DEVICE_ID --registry /PRIVATE/devices.json
-npm run devices -- publish --registry /PRIVATE/devices.json
+R2_PRIVATE_DIR="$HOME/.config/d2r-save-sync"
+mkdir -p "$R2_PRIVATE_DIR"
+chmod 700 "$R2_PRIVATE_DIR"
+R2_SAVE_URL='https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev'
+npm run devices -- add iPhone "$R2_SAVE_URL" --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
+npm run devices -- add Android "$R2_SAVE_URL" --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
+npm run devices -- add Mac "$R2_SAVE_URL" --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
+npm run devices -- publish --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
 ```
 
-`add` 和 `revoke` 先修改本地注册表，只有 `publish` 成功后才影响服务。测试注册时额外传 `--test --config wrangler.test.jsonc`；测试连接码不能用于正常存档目录。更换设备时生成新令牌、导入成功后撤销旧令牌。不要删除 R2 中的当前版本指针来“解决冲突”。
+每次 `add` 只输出新设备编号和 `connection-<编号>.txt` 路径；记下它对应哪台设备。`publish` 把完整注册表写入 Worker 的 **`DEVICES` secret**，并非公开变量。未发布或已撤销的设备得到 `401`。注册表必须持续保留：以后新增设备仍使用同一份文件，不能用新空注册表发布，否则会撤销原有设备。
+
+连接文件含授权令牌，持有者可以访问该个人服务的全部存档。不要把它、注册表、Wrangler 登录信息、签名证书、游戏存档或资源放进 Git、安装包、公开日志或工单。连接码丢失时生成新设备令牌；服务只存摘要，不能找回原令牌。
+
+### 3. 构建并连接三端
+
+客户端已集成共用 R2 核心，无需写死服务地址或密钥。按 [iOS 构建说明](../../dm/ios/README.zh-CN.md)、[Android 构建说明](../../dm/android/README.zh-CN.md) 及 [Mac 构建脚本](../../dm/tools/mac_app.sh) 准备游戏资源并构建。免费 Apple 账号使用 `DM_FREE_ACCOUNT=1`。正常构建不要开启 `DM_SYNC_TESTING`、`DM_SYNC_FORCE_ISOLATED` 或 `dmSyncTesting`；这些只供隔离测试。
+
+每台设备使用上一步**自己的**连接文件：
+
+1. 打开游戏内 **设置 → 自定义 → 云存档 → 连接设备**。
+2. 将对应文件的完整 JSON 内容复制到设备剪贴板，点击 **粘贴连接码**；iPhone 如出现系统粘贴提示，选择允许。
+3. 核对预览里的服务地址和设备编号，点击确认连接。应用将凭据存入 Apple 钥匙串或 Android Keystore 保护的存储，不显示令牌。
+4. 完全退出并重新打开应用，等待同步。先连接持有主进度的一台设备，确认显示“云端已同步”，再逐台连接其余设备。两边已有不同进度时必须由玩家选择，不按设备时间覆盖。
+5. 在第二台确认角色、背包和共享仓库，游玩并“保存并退出”；等待“云端已同步”后，再到下一台重开验证。每台的画质和触控设置仍独立保存。
+
+若不便粘贴，可把文件命名为 `cloud-connection.json`，放在 `save` 目录旁，再在同一页面选择 **导入连接文件**。iPhone 是应用 Documents 目录；Mac 默认是 `~/Library/Application Support/D2R Mobile/`；Android 是该应用的私有 `files` 目录（仅自建可调试包可通过 `adb run-as` 写入）。不要把连接文件放入 `save` 目录或公共资源包。验证安全存储读回成功后，应用删除已导入的明文文件；管理员私人备份由你自行保管。
+
+### 4. 撤销、换机和维护
+
+```sh
+npm run devices -- list --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
+npm run devices -- revoke DEVICE_ID --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
+npm run devices -- publish --registry "$R2_PRIVATE_DIR/devices.json" --config wrangler.local.jsonc
+```
+
+`add` / `revoke` 先改本地注册表，`publish` 成功才影响服务。换机时先添加新设备，确认连接后再撤销旧设备；设备丢失时立即撤销。若真实令牌曾进入公开提交，删除文件并不能消除泄露，应先撤销令牌，再清理历史。应用卸载前备份进度；重签覆盖安装沿用同一标识以保留资源、设置和凭据。
+
+每次更新 Worker 使用同一份 `wrangler.local.jsonc` 和私有桶，更新前备份桶中的 `v1/index.json`、`v1/snapshots/` 及本地设备注册表。不要删除版本指针来解决冲突。错误凭据用重新连接处理；网络超时可在云存档主页“立即同步”重试；游戏中下载完成后须重开应用才生效。
+
+### 5. 独立测试环境
+
+另外创建测试 Worker 和测试桶，复制 `wrangler.test.jsonc` 为 `wrangler.test.local.jsonc` 并修改名称、绑定。使用独立注册表，设备生成时额外传 `--test --config wrangler.test.local.jsonc`；测试和正式凭据不能混用。
+
+`tools/remote-test.ts` 会发布合成测试存档，只能用于**尚无进度、没有游戏客户端连接**的专用测试服务。必须显式指定预期地址：
+
+```sh
+DM_TEST_WORKER_ORIGIN='https://YOUR-TEST-WORKER.YOUR-SUBDOMAIN.workers.dev' \
+  npx tsx tools/remote-test.ts /PRIVATE/TEST/connection-DEVICE_ID.txt
+```
+
+脚本验证 `test:true`、HTTPS 地址完全一致和空服务后才运行并发提交测试。不要把合成测试快照用于真实游戏。真实游玩闭环应使用另一套隔离游戏进度。
 
 ## 玩家操作
 

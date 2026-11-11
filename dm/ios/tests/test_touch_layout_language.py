@@ -7,6 +7,8 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root / 'ios/tools'))
 import touch_layout as layout
+import dm_i18n
+translations = {r[0]: r[1:] for r in dm_i18n.rows()}
 
 out, _ = layout._custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"')
 page = json.loads(re.sub(r',\s*([}\]])', r'\1', out))
@@ -27,6 +29,9 @@ walk(page)
 opts = (('zh', 'Zh', 'dmCustomLangZh', 0, 131), ('en', 'En', 'dmCustomLangEnOpt', 0, 196), ('es', 'Es', 'dmCustomLangEsOpt', 0, 213),
         ('ru', 'Ru', 'dmCustomLangRuOpt', 1, 221), ('ko', 'Ko', 'dmCustomLangKoOpt', 1, 166), ('pt', 'Pt', 'dmCustomLangPtOpt', 1, 290))
 for key, cap, label, _, _ in opts:
+    assert label in translations and all(translations[label]), label
+    hint = 'dmCustomLangHint' + cap
+    assert hint in translations and all(translations[hint]), hint
     box = nodes['TouchCustom_lang_' + key]
     assert box['type'] == 'ToggleButtonWidget', key
     assert box['fields']['onClickMessage'].endswith('TouchCustom_lang_' + key), key

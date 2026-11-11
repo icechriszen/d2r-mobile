@@ -1,0 +1,8 @@
+{
+  "name": "d2r-save-sync-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-25",
+  "r2_buckets": [{ "binding": "SAVES", "bucket_name": "d2r-save-sync-test" }],
+  "triggers": { "crons": ["17 4 * * *"] },
+  "observability": { "enabled": false }
+}

@@ -2,6 +2,7 @@
 // 连接的手柄跟运行模式走：DM_OPMODE=1（主机，默认）→ 1P 全键手柄；0（掌机）→ 掌机手柄。震动不支持（设备数 0）。
 // nn::hid (controller / touchscreen): on the real device shared memory is read through the hid service; the host takes it from the current dm_input state, written by the front end (Mac keyboard / iOS touchscreen).
 // The connected controller follows the operation mode: DM_OPMODE=1 (console, default) → 1P full-key controller; 0 (handheld) → handheld controller. Vibration is not supported (device count 0).
+#include "../sync/dm_sync_ui.h"
 #include "hle.h"
 #include "dm_prof.h"
 #include "dm_uiscreen.h"
@@ -54,6 +55,9 @@ static _Atomic uint64_t g_press_latch;
 // Controller (dm_input.h dm_pad_set): buttons and the four axes are packed into two atomics, and press edges are likewise latched until the game's next
 // read (short controller presses are not lost)
 static _Atomic uint64_t g_pad_btn, g_pad_axes, g_pad_latch;
+void dm_pad_clear(void) {
+    atomic_store(&g_pad_btn, 0); atomic_store(&g_pad_axes, 0); atomic_store(&g_pad_latch, 0);
+}
 void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
     uint64_t old = atomic_exchange(&g_pad_btn, buttons); atomic_fetch_or(&g_pad_latch, buttons & ~old);
     atomic_store(&g_pad_axes, (uint64_t)(uint16_t)lx | (uint64_t)(uint16_t)ly << 16 | (uint64_t)(uint16_t)rx << 32 | (uint64_t)(uint16_t)ry << 48);
@@ -406,7 +410,16 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
       if (!(s->lx || s->ly) && (plx || ply)) { s->lx = plx; s->ly = ply; } if (!(s->rx || s->ry) && (prx || pry)) { s->rx = prx; s->ry = pry; } }
     { int dm_padmode_input_gate(uint64_t *); if (dm_padmode_input_gate(&s->buttons)) s->lx = s->ly = s->rx = s->ry = 0; }   // 手柄 / 触屏切换事务进行中：键和摇杆都不交给游戏；触发切换时按着的键松开前也不交（dm_padmode.c） | Controller / touch switch transaction in progress: neither keys nor sticks are handed to the game; keys held when the switch was triggered are not handed over either until released (dm_padmode.c)
     if (dm_pad_hook) dm_pad_hook(guest_ns(), &s->buttons, &s->lx, &s->ly, &s->rx, &s->ry);
+    // 镜头实验：摇杆 / 瞄准按透视画面方向换成原版方向（dm_cam.c；镜头关着原样不动）。放在 dm_pad_hook 之后：安卓的触屏摇杆是在那里才填进来的
+    // （touch_android.c dm_android_touch_step），放在前面它就没被换算，镜头转过以后推上仍按原版画面的「上」走（OnePlus 13 实测）。
+    // iOS 与 Mac 键盘的摇杆从 dm_input_set 进来、早就在 s 里；Mac 的 dm_pad_hook 不给摇杆值，所以挪到这里对它们没有影响
+    // Camera experiment: sticks / aim converted from perspective-picture directions to original directions (dm_cam.c; unchanged while the camera is off).
+    // After dm_pad_hook: Android's touch stick is filled in only there (touch_android.c dm_android_touch_step), so before it the touch stick was not
+    // converted, and after the camera turned, pushing up still walked "up" on the original picture (measured on a OnePlus 13). The iOS and Mac keyboard
+    // sticks come in through dm_input_set and are already in s, and the Mac's dm_pad_hook gives no stick values, so this move does not affect them
+    { void dm_cam_remap_stick(int32_t *, int32_t *, int32_t *, int32_t *); dm_cam_remap_stick(&s->lx, &s->ly, &s->rx, &s->ry); }
     { uint64_t dm_runeword_pad_filter(uint64_t); s->buttons = dm_runeword_pad_filter(s->buttons); }   // 手柄模式符文之语清单开着时十字键 / A / B / L / R 归清单（dm_runeword.c） | While the runeword list is open in controller mode, the D-pad / A / B / L / R belong to the list (dm_runeword.c)
+    s->buttons = dm_sync_ui_filter(s->buttons, &s->lx, &s->ly, &s->rx, &s->ry);
     { uint64_t dm_padmode_page_filter(uint64_t); s->buttons = dm_padmode_page_filter(s->buttons); }   // 手柄模式我们自己的页（自定义页等）开着时，页声明的键归页（dm_padmode.c） | While one of our own pages (the Custom page etc.) is open in controller mode, the buttons the page declares belong to the page (dm_padmode.c)
     { uint64_t dm_swapskill_filter(uint64_t); s->buttons = dm_swapskill_filter(s->buttons); }   // 副手组技能：换武器好之前压住那个键（dm_actions.c） | off-hand set skill: hold that key back until the weapon swap is done (dm_actions.c)
     { static int trx, tryy, tdelay, held, tset = -1; if (tset < 0) { const char *e = getenv("DM_TEST_RSTICK"); tset = e && sscanf(e, "%d,%d,%d", &trx, &tryy, &tdelay) >= 2; }   // 测试开关 DM_TEST_RSTICK=rx,ry[,延迟次数]：按键脚本按着 A / B / X / Y 时把右摇杆置成这个值（模拟「按住技能钮拖动」，游戏自己也看得到右摇杆）；延迟 = 按下后第几次取手柄才开始给（真手指是先按下、再拖出方向） | test switch DM_TEST_RSTICK=rx,ry[,delay count]: while the key script holds A / B / X / Y, set the right stick to this value (simulates "hold a skill button and drag", the game itself also sees the right stick); delay = on which controller read after the press it starts being given (a real finger presses first, then drags out a direction)
@@ -416,6 +429,10 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     { static uint64_t prev; if ((s->buttons & DM_BTN_L) && !(prev & DM_BTN_L)) { int n = atomic_fetch_add(&g_dm_l_presses, 1) + 1; if (n <= 3) LOG("取手柄处：「显示物品」键（L）交给了游戏，本进程第 %d 次", n); } prev = s->buttons; }   // 「显示物品」键（L）交给游戏的按下次数（首领掉落读数用，dm_bossrush.c） | number of presses of the 「显示物品」(Show Items) key (L) delivered to the game (used by the boss drop readout, dm_bossrush.c)
     if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;   // 脚本摇杆伪键：推满（Horizon 摇杆 ±32767，上为正） | script stick pseudo-keys: push to full (Horizon stick ±32767, up is positive)
     if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
+    // 镜头实验：脚本摇杆伪键在上面的换算之后才写进来，镜头开着时补换算一次，测试脚本推的方向才和手指推的一样（镜头关着时是空操作）
+    // Camera experiment: the script stick pseudo-keys are written after the conversion above, so convert them once more while the camera is on, so a test
+    // script pushes the same way a finger does (a no-op while the camera is off)
+    if (km & PK_MASK & ~(uint64_t)PK_TOUCH) { void dm_cam_remap_stick(int32_t *, int32_t *, int32_t *, int32_t *); int32_t zx = 0, zy = 0; dm_cam_remap_stick(&s->lx, &s->ly, &zx, &zy); }
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);

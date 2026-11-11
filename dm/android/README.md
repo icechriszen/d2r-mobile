@@ -21,6 +21,16 @@ player" below.
 - `compat/`: Android implementations of the host's Apple platform interfaces.
 - `tools/`: source-list parsing, ELF assembly conversion, and localized resources.
 
+## Physical controllers
+
+Standard Android USB/Bluetooth gamepads feed the shared host and upstream controller layout. A deliberate button press or stick movement switches to controller mode; release and press again after the layout transition. The first touch switches back to touch mode without also activating the game. Both sticks, D-pad keys/hat axes, digital/analog triggers, shoulders, stick clicks, Start and Select are supported. System Home is left to Android. Rumble is not implemented.
+
+Xbox/generic, PlayStation and Nintendo mappings follow the upstream glyph/function conventions. Sticks take control above 25%, return to zero below 15%, and must recenter after touch takes over. Per-device state prevents disconnecting one controller from releasing another controller's inputs. Focus loss clears held inputs and pending press edges; Android dialogs retain normal navigation.
+
+Run `GamepadStateTest.java` with `GamepadState.java` using `javac`/`java`; no Android device is needed for the state tests. On 2026-10-25 an 8BitDo Ultimate C Wired Controller (USB 2dc8:3017) was verified for gameplay, movement and buttons on the SM8550 modified device. Bluetooth, physical Sony/Nintendo devices, right-stick aiming and physical hotplug have not been separately verified.
+
+Personal cloud saves are documented in [the R2 service guide](../../services/save-sync/README.md). Test connections and test save directories are isolated from normal progress.
+
 ## Installing as a player
 
 The release page's `D2RMobile-android.apk` contains no game content (built by
@@ -95,6 +105,7 @@ it into the internal directories below.
 | App internal `files/dm/shaders/` | External `.xgs` bundles matching the game and Vulkan backend |
 | App internal `files/dm/overlay/` | Required CASC touch overlay, including `overlay.manifest`, generated from the matching source and the user's resources |
 | App internal `files/dm/overlay/touchart/`, `files/dm/overlay/hud_v4_ui/` | Skill atlases and their silver silhouettes, map icon, circle frame, bottom bar art, and the skill-button socket (the repository's `dm/ios/Sources/ControlArt/dm_mobile_socket.png`), staged by `stage_touch_assets.py`. The touch controls draw them the same way as iOS (`dm/ios/Sources/DmTouchControlArt.h`, `DmTouchOverlay.m`); the joystick is drawn in code |
+| App internal `files/dm/overlay_variants/` | Optional: a complete overlay per combination of the Custom switches that go through the overlay (now only "Item notes and old names"), each with its own `overlay.manifest`; at start the App layers the one matching the switches in front of `overlay/` |
 | Shared `Download/S2X/D2R Mobile/data/` | User's resource archives and `.build.config`; requires Android's all-files-access setting. When this directory does not exist but the earlier `Download/data/` does, the App keeps using `Download/data/` |
 | App internal `files/dm/derived.tsv`, `files/dm/pack_info.txt` | Data tables generated from game files (read at startup by the release APK without game content); the import pack's product code and creation time |
 | App internal `files/save/` | Saves; preserve during upgrades |
@@ -128,7 +139,7 @@ locations, the c1 bytes, then the SPIR-V (`xbg_shader_header` in
   reading and writing storage images of unknown format are added, unused
   capabilities are trimmed, `<key>.vk.json` is exported, and the packing function
   of `pack_game_shaders.py` writes the bundle. The 6,927 bundles it makes are
-  byte-for-byte identical to the tested ones made with biglawine's HarmonyOS
+  before the compatibility transformations below, byte-for-byte identical to the tested ones made with biglawine's HarmonyOS
   shader pipeline (`dmsh_vk.py --compare <reference dir> <output dir>`).
 - **4 are the query kernels embedded in the main program** (`q_val0`,
   `q_val8`, `q_dlt0`, `q_dlt8`; Mac and iOS use the MSL versions in
@@ -142,8 +153,34 @@ A bundle set can also carry `vk-pipeline-list.seed`. On a first launch, before
 lists during start-up, so a first visit to the places it covers does not
 stutter while pipelines build. `dm/android/tools/merge_warm_lists.py` merges
 several devices' `files/dm/vk-pipeline-list.bin` into one seed. A seed only
-works with the bundles it was recorded with, so it ships with them. The
-measurements are in `docs/android-notes/2026-10-22-first-play-stutter.md`.
+works with the bundles it was recorded with, so it ships with them:
+`dm/tools/d2rm_android.py --warm-seed <file>` puts one into the import pack,
+checks it before the slow steps, and records it in `pack_info.txt` as
+`WARM_SEED=<sha256 prefix>`. Keep seeds outside the repository. The seed only
+helps a first launch: a phone that already has `files/dm/vk-pipeline-list.bin`
+keeps using its own list after a re-import. The tool's check runs with
+`make -C dm/host/tests run` (or `python3 dm/tools/tests/test_warm_seed.py`).
+The measurements are in `docs/android-notes/2026-10-22-first-play-stutter.md`.
+
+## Screens narrower than 16:9 (foldables)
+
+A foldable inner panel (vivo X Fold3: 2480x2200, aspect 1.127) is narrower than 16:9, so a 16:9 picture leaves black bars at the top and bottom. `front_android.c` therefore turns on the same "true fullscreen" the iOS (`front_ios.m`) and HarmonyOS (`front_ohos.c`) ports use: in a run the picture is output at the screen aspect and the 3D fills the screen, the host lays the game UI out at 16:9 anchored to the bottom (`dm_uiscreen.c`), and the Vulkan engine shifts that UI draw pass down (`xbg_set_ui_rect_fn`). Front-end pages and the loading screen stay 16:9 centered with margins, because they are designed as whole 16:9 pages.
+
+The touch overlay (`TouchOverlay.java`) and the native touch layout follow `front_android_view_rect`: the bottom 16:9 UI rectangle in a run, the centered 16:9 block outside it, the whole window on screens wider than 16:9 (where nothing changes). Drawing, hit tests and `dm_ui_*` coordinates live inside that rectangle; touches above it are still world taps (the game side receives a negative y), and world taps convert back to picture coordinates (`world_rect`/`world_norm`, as in `touch_ohos.c`).
+
+The output size is the screen aspect with a 1080-line short side by default, and the 3D scale defaults to about 700 lines (0.65): the same GPU budget as the old 720p x 0.75, with a UI 2.25x sharper than 720p. Native pixels would lift the 3D from 540p to 1100p, because the game's 3D scale floors at 0.5 (`hle_oe.c`), which no Snapdragon 8-class device holds at 60 fps. `DM_ANDROID_RES=<short side>` overrides the profile, `DM_NATIVE_RES=1` uses the screen's native pixels, and `DM_ANDROID_FULL=0` turns true fullscreen off (16:9 with bars everywhere, like `DM_IPAD_FULL=0` on iPads).
+
+The game floors its UI height at 720 pixels (`dm_uiscreen.c`). Measured on 3.3.94012 by writing 684 / 756 / 792 and reading back the HUD: the orb-centre gap scales as 0.667x the height the game actually lays out, so 684 is laid out as 720 — the UI then overflows the bottom of the picture and every overlay copy sits a few percent off. The host therefore writes `max(width*9/16, 720)` (and caps the front-end render height the same way, so the character-select page no longer overflows); `DM_UI_MIN_H` overrides the floor. The vertical offset, the overlay's view rectangle and the UI-text / tap conversions all follow that floored value.
+
+Two engine details come with it (`xbg_game.cpp`): UI draws binding the same projection constant buffer as a recognised UI draw are shifted as well (the minimap's geometry uses a different vertex signature), and a top widget the host lifted above the UI rectangle receives an empty scissor from the game — the engine replaces it with the picture's top strip instead of dropping it, which is what made the minimap disappear in true fullscreen.
+
+The overlay has to follow the game on every edge, and the horizontal reference turned out not to be a constant: the game lays its HUD out for 16:9, so the HUD centreline always sits 1920 layout units (= 1173.6 mockup pixels) from the UI rectangle's left edge. On a 16:9 rectangle that is the rectangle's centreline, and on a narrower one -- which is exactly what the 720-pixel floor produces -- it sits right of it. `front_android_view_rect` therefore derives that difference from the current resolution and shifts the whole overlay's view rectangle by it (the self-drawn HUD, the buttons and the touch mapping all move together, while `world_rect` adds `-vr_x` back so world taps are untouched). Verified on the simulated Galaxy Z Fold 8 inner panel (2448x1848, aspect 1.325) and cover display (1972x1248, 1.58), where the offset computes to 0, and on 2480x2200 where it is the ~50 pixels the HUD contents needed.
+
+Two more measurements from the same 2480x2200 panel: the game's own HUD in true fullscreen is centred 44 mockup pixels right of the 16:9 mockup's centreline (1434), so the self-drawn cells, numbers and badges sat about 50 screen pixels left of the game's belt content (`TouchOverlay.hudX` now draws on the game's reference in that case); and the top-right minimap plus the area-name label were drawn past the picture's right edge, so a true-fullscreen run reports a small default right safe area (`touch_android.c`) that moves that block inward. Wide screens keep both values at 0 and are unchanged.
+
+Verified on the Xiaomi 12T Pro at 2480x2200 (HUD cells and belt content aligned, minimap visible, area name fully on screen), at 2480x1995 / 2480x1900, and at native 2712x1220.
+
+The game only accepts a render size at or below the window texture it created at startup (`dm_uiscreen.c`), so the first value reported is the cap and later values are the current size. Unfolding / folding recomputes the current size, scales it into the cap and pushes notification 31 so the game rereads. Started on the wide outer screen, unfolding can only scale into the cap reported at startup: the picture fills but is softer than starting unfolded. The regression cases are in `dm/android/tests/test_touch_snapshot.c` (`android_view_rect_coordinates`, `android_world_tap_fullscreen`).
 
 ## Validation and remaining work
 
@@ -155,6 +192,16 @@ javac -encoding UTF-8 -d /tmp/dm-input-tests \
   dm/android/app/src/main/java/com/xiaoboluo/d2r/TextInputRules.java \
   dm/android/tests/TextInputRulesTest.java
 java -cp /tmp/dm-input-tests com.xiaoboluo.d2r.TextInputRulesTest
+```
+
+Save export / import (`SaveTransfer.java`, see "Backing up and moving saves" in
+`docs/ANDROID.md`) is tested in a temporary directory the same way:
+
+```sh
+javac -encoding UTF-8 -d /tmp/dm-save-tests \
+  dm/android/app/src/main/java/com/xiaoboluo/d2r/SaveTransfer.java \
+  dm/android/tests/SaveTransferTest.java
+java -cp /tmp/dm-save-tests com.xiaoboluo.d2r.SaveTransferTest
 ```
 
 Device acceptance must separately record installation, genuine GPU output/FPS,
@@ -205,3 +252,13 @@ DM_3D_SCALE_FLOOR=0.60
 ```
 
 Synchronization stays enabled. The file cannot override synchronization, frame overlap or any other setting. The parser regression is `dm/android/tests/test_debug_env.c`; build and run it independently from the game.
+
+## Adreno compatibility additions (2026-10-25)
+
+The Vulkan pack generator removes only a proven-unused trailing `CullDistance` member from the translated per-vertex interface, avoiding an 8-clip-plus-1-cull limit violation. Real cull use fails generation instead of being silently discarded. The single verified fluid accumulation shader uses a complete subgroup-independent prefix/compaction kernel with the original descriptor contract; it does not drop the effect. Rebuild the private shader pack after updating this source.
+
+CPU-backed R16_UNORM textures sampled with depth comparison receive a D16 alias containing the same UNORM16 values. The existing format capability path may widen D16 to D24. Unsupported GPU-written color/depth-comparison aliases fail explicitly. Optional `DM_VK_VALIDATE=1` requires a locally supplied validation layer; normal APKs do not need to bundle it.
+
+The 6,927 translated shaders passed SPIR-V validation. Fluid compaction/output checks passed 16 boundary/random masks on the SM8550 and SM8650 test devices. Startup, camp and background/resume on SM8550 produced no Vulkan validation errors. These results do not establish that every location/effect or every Adreno device has been tested.
+
+The Adreno 750 compiler also crashes on helper-function shapes in verified compute and fragment modules. `adreno_compat.py` applies standard SPIR-V optimization only to verified inputs `6a7a308d61928982` and `00f1902d880682c7`, enforcing original SHA-256 and descriptor contracts and Vulkan 1.1 validation. The latter covers the first empty-save character creation screen. Both were regenerated from original Switch packs and compared byte-for-byte with device-tested bundles. No draws or effects are skipped.

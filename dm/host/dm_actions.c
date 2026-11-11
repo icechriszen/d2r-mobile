@@ -16,6 +16,7 @@
 //   Stat point allocation: UI message CharacterStatsPanelMessage:UseSkillPoint, payload {i32 index (0 strength 1 dexterity 2 vitality 3 energy), i32 mode (2 = 1 point, 3 = 5 points, 1 = all)} (the same message sent by the stat plus widget 0xc4f704, handled by 0xc42858 → packet 0x3a).
 //   Skill point allocation: the skill tree button widget stores the click message -- [+0x558] category SkillsTreePanelMessage, [+0x568] → i32 skill id; send SkillsTreePanelMessage:UseSkillPoint {skill id} (handled by 0xc362ac → packet 0x3b);
 //            whether a point can be added = main+0xc368b0(skill id).
+#include "../sync/dm_sync_ui.h"
 #include "dm_prof.h"
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
@@ -364,6 +365,12 @@ int dm_swapskill_busy(void) { return atomic_load(&g_ss_phase) != SS_IDLE; }   //
 static _Atomic uint32_t g_ss_itemsig; uint32_t dm_swapskill_itemsig(void) { return atomic_load(&g_ss_itemsig); }   // 客户端技能链表里物品给的技能（技能号、物品 id）的指纹 | Fingerprint of the item-granted skills (skill id, item id) in the client skill linked list
 int dm_swapskill_slot(int slot, int *charges) {   // 1 = 技能在另一组（画「II」），2 = 充能技能（画次数），4 = 当前组也有同号技能（按下用当前组那个，不换武器）；可叠加 | 1 = the skill is in the other set (draw "II"), 2 = charged skill (draw the count), 4 = the current set also has a skill with the same id (a press uses the one in the current set, no weapon swap); can be combined
     if (slot < 0 || slot >= 12) return 0; int k = atomic_load(&g_ss_kind[slot]); if (charges) *charges = atomic_load(&g_ss_charges[slot]); return k; }
+// 换手那组（部位 11 / 12）的装备给的非职业技能（物品属性 97，层 = 技能号；典型：战争召唤的战斗体制 / 战斗指挥 / 大叫）。这类技能在技能链里是来源 -1 的普通节点，
+//   绑定表也记成物品 -1，和自己学的一样，所以不能按物品 id 认，只能看换手那组给不给。每帧由 swapskill_pump 重算，技能号 < 512
+// Non-class skills granted by the gear in the weapon-swap set (body locations 11 / 12; item stat 97, layer = skill id; typically Call to Arms' Battle Orders / Battle Command / Battle Cry). Such a skill is an ordinary
+//   node with source -1 in the skill list and the binding table records item -1 for it, the same as a learned skill, so it cannot be recognized by item id, only by whether the swap set grants it. Recomputed every frame by swapskill_pump; skill ids < 512
+static _Atomic uint64_t g_ss_offgive[8];
+int dm_swapskill_offhand_gives(int skill) { return skill >= 0 && skill < 512 && (atomic_load(&g_ss_offgive[skill >> 6]) >> (skill & 63) & 1); }
 int dm_swapskill_equipped(int32_t item) {   // 这件物品身上穿着（含换手位那组）：技能钮照常显示、不当空位 | This item is being worn (including the set in the weapon-swap slots): the skill button is shown as usual, not treated as an empty slot
     int n = atomic_load(&g_ss_neq); for (int i = 0; i < n && i < 16; i++) if ((int32_t)atomic_load(&g_ss_equipped[i]) == item) return 1; return 0; }
 static int ss_node(uint64_t pl, int id, int item, int *charges) {   // 技能链表里「技能号 + 物品 id」都对上的节点：在 = 1 | The node in the skill linked list where both "skill id + item id" match: present = 1
@@ -394,6 +401,12 @@ static void swapskill_pump(uint8_t *b, uint64_t pl) {
     uint64_t inv = *(uint64_t *)(pl + 0x90), it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0; int neq = 0; uint64_t eqit[16];
     for (int k = 0; it && k < 512; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if (*(uint32_t *)(it + 0xc) == 1 && neq < 16) { eqit[neq] = it; atomic_store(&g_ss_equipped[neq], *(uint32_t *)(it + 8)); neq++; } it = *(uint64_t *)(d + 0xb0); }
     atomic_store(&g_ss_neq, neq);
+    { static uint64_t osig = 1; static int age; uint64_t sig = 0; for (int e = 0; e < neq; e++) { uint64_t d = *(uint64_t *)(eqit[e] + 0x10); int loc = d ? *(uint8_t *)(d + 0x54) : 0;
+          if (loc == 11 || loc == 12) sig = sig * 1099511628211ull ^ ((uint64_t)*(uint32_t *)(eqit[e] + 8) << 8 | (uint64_t)loc); }
+      if (sig != osig || ++age >= 120) { osig = sig; age = 0; uint64_t give[8] = {0};   // 换手那组的物品变了（换武器 / 穿脱）才重算，另每 120 帧重算一次（物品属性可能比物品晚到客户端）：每件查 512 个技能号 | recompute when the swap set's items change (weapon swap / put on or take off) and every 120 frames (item stats may reach the client after the item): 512 skill ids per item
+          for (int e = 0; e < neq; e++) { uint64_t d = *(uint64_t *)(eqit[e] + 0x10); int loc = d ? *(uint8_t *)(d + 0x54) : 0; if (loc != 11 && loc != 12) continue;
+              for (int sk = 0; sk < 512; sk++) if (((int (*)(uint64_t, int, int))(b + 0x5b9290))(eqit[e], 97, sk) > 0) give[sk >> 6] |= 1ull << (sk & 63); }
+          for (int i = 0; i < 8; i++) atomic_store(&g_ss_offgive[i], give[i]); } }
     { uint32_t h = 2166136261u; uint64_t l = *(uint64_t *)(pl + 0x100), n = l ? *(uint64_t *)l : 0;
       for (int k = 0; n && k < 1024; k++, n = *(uint64_t *)(n + 8)) { uint64_t r = *(uint64_t *)n; int32_t itm = *(int32_t *)(n + 0x44); if (r && itm != -1) { h = (h ^ (uint16_t)*(int16_t *)r) * 16777619u; h = (h ^ (uint32_t)itm) * 16777619u; } }
       atomic_store(&g_ss_itemsig, h); }
@@ -404,6 +417,7 @@ static void swapskill_pump(uint8_t *b, uint64_t pl) {
                     if (alt != -2) { kind = 4; ch = -1; atomic_store(&g_ss_alt[s], alt);   // 用当前组那个来源：次数也显示它的（自己学的 / 非充能 = 不显示） | Use the source in the current set: the charge count shown is its too (self-learned / not charged = not shown)
                         for (int e = 0; e < neq && alt != -1; e++) if (*(int32_t *)(eqit[e] + 8) == alt) { ch = ss_item_charges(eqit[e], id); if (ch >= 0) kind |= 2; } }
                     else kind |= 1; } } }
+        else if (id >= 0 && item == -1 && ss_node_any(pl, id) == -2 && dm_swapskill_offhand_gives(id)) kind = 1;   // 战争召唤这类（物品 -1）：当前组没有、换手那组给 = 在另一组，按下换武器放 | Call to Arms style (item -1): absent from the current set, granted by the swap set = in the other set; a press swaps weapons and casts
         atomic_store(&g_ss_kind[s], kind); atomic_store(&g_ss_charges[s], ch < 0 ? 0 : ch); }
     // 测试开关 DM_TEST_SS_ALT=1（造现场）：把「在另一组」的那格绑定抄到同一个面的第二套（按住 ZL 那套）格里，验第二套技能上的副手组技能。
     // 每拍对齐一次：进局头几拍绑定里的物品 id 还是存档里的旧号，游戏随后才改成本局的号（先 14 后 13），只抄一次会抄到旧号
@@ -802,7 +816,7 @@ void dm_actions_pump(void) {
                 while (l < 32 && sscanf(c, "%2x", &v) == 1 && c[0] != ';' && c[1] != ';' && c[1]) { q[n].pk[l++] = (uint8_t)v; c += 2; } q[n].len = l; n++; e = strchr(c, ';'); if (e) e++; } }
         uint64_t f = dm_guest_frame(); for (int i = 0; pl && i < n; i++) if (q[i].at && f >= q[i].at) { q[i].at = 0; ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(q[i].pk, q[i].len); LOG("测试 DM_TEST_C2S：帧 %llu 发包 %02x（长 %d）", (unsigned long long)f, q[i].pk[0], q[i].len); } }
     { void dm_freetp_client_step(uint8_t *, uint64_t); DM_PROF(0, "a.freetp_client", dm_freetp_client_step(b, pl)); }   // 免费回城：客户端玩家挂回城技能、读 ZR 那格空不空 | Free town portal: attach the town portal skill to the client player and read whether the ZR slot is empty
-    dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_kills_ui_pump(void); DM_PROF(0, "a.kills_ui", dm_kills_ui_pump()); } { void dm_rift_ui_pump(void); DM_PROF(0, "a.rift_ui", dm_rift_ui_pump()); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
+    dm_sync_ui_pump(root); dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_kills_ui_pump(void); DM_PROF(0, "a.kills_ui", dm_kills_ui_pump()); } { void dm_rift_ui_pump(void); DM_PROF(0, "a.rift_ui", dm_rift_ui_pump()); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
     uint32_t use = atomic_exchange(&g_use, 0); int force_merc = use ? atomic_exchange(&g_use_merc, 0) : 0;
     if (use && pl) { uint64_t it = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), use & 0x7f, use, 4);
         int busy = *(uint32_t *)(pl + 0xc) == 0x11 || ((uint64_t (*)(void))(b + 0x2aa7c0))() != 0, can = it && !busy && (((int (*)(uint64_t, int))(b + 0x3bff70))(it, 3) & 1);

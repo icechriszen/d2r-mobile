@@ -5,6 +5,7 @@
 // Without DM_WINDOW: the guest runs directly on the current thread, behaving the same as with no front end (windowless tests use this).
 // Key map (Nintendo layout): WASD left stick, arrow keys D-pad, J=A K=B U=X I=Y, Q=L E=R, Z=ZL C=ZR, F=press left stick G=press right stick, Return=+ Tab=−.
 #import <Cocoa/Cocoa.h>
+#include "../sync/dm_sync_ui.h"
 #include <sys/sysctl.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
@@ -12,6 +13,8 @@
 #include "dm.h"
 #include "dm_input.h"
 #include "dm_uiscreen.h"
+#include "touch_mac.h"
+#import "../ios/Sources/dm_rift_hud.h"
 void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
@@ -171,6 +174,12 @@ static int key_bit(unsigned short code) {
 }
 static void on_key(NSEvent *e, int down) {
     unsigned short c = e.keyCode;
+    int vk=c==53?27:c==36?13:c==49?32:c==48?9:c==126?38:c==125?40:c==123?37:c==124?39:0;
+    if(dm_sync_ui_active()&&!(e.modifierFlags&NSEventModifierFlagCommand)){
+        // 弹层接管后仍清掉旧键状态，避免打开面板那次按键的抬起被吞掉而粘住。
+        // Clear the old virtual keys when the modal takes over, so swallowing the opener's key-up cannot leave it held.
+        g_btn=0;g_w=g_a=g_s=g_d=g_wheel=0;push();dm_sync_ui_key(vk,down);return;
+    }
     switch (c) { case 13: g_w = down; break; case 0: g_a = down; break; case 1: g_s = down; break; case 2: g_d = down; break; }
     int b = key_bit(c);
     if (down && (b >= 0 || c == 13 || c <= 2)) dm_padmode_request_glyph(DM_GLYPH_KBD);   // 按了游戏用的键：键位图标换成键盘键帽（鼠标移动 / 点击不算） | a key used by the game was pressed: switch the key icons to keyboard key caps (mouse moves / clicks do not count)
@@ -205,6 +214,16 @@ void front_run(void (*guest)(void)) {
         g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         g_layer.contentsScale = win.backingScaleFactor;
         [v.layer addSublayer:g_layer]; layout_game();
+        // 复用 iOS 的只读任务栏，绘制在 Metal 之上，位置随游戏视口变化。
+        // The same read-only HUD as iOS, above Metal and in the current game viewport.
+        // 公共运行模式让拖动窗口、切换全屏时也能更新几何。
+        // Common modes keep its geometry current during window dragging/fullscreen transitions.
+        NSTimer *riftHUDTimer = [NSTimer timerWithTimeInterval:1.0 / 30 repeats:YES block:^(NSTimer *timer) {
+            (void)timer;
+            BOOL hide = !dm_uiscreen_ingame() || (g_live && !dm_touch_host_world_active());
+            dm_rift_hud_draw(v, NSRectToCGRect(game_rect()), hide);
+        }];
+        [NSRunLoop.mainRunLoop addTimer:riftHUDTimer forMode:NSRunLoopCommonModes];
         [win center];
         g_live = getenv("DM_APP") || getenv("DM_TOUCH_LIVE"); if (g_live) dm_touch_host_live_enable();
         if (g_live) {
@@ -214,7 +233,10 @@ void front_run(void (*guest)(void)) {
         { // 菜单栏：应用（退出 ⌘Q）/ 显示（全屏 ⌃⌘F）/ 帮助（键位对照） | Menu bar: application (Quit ⌘Q) / View (Full Screen ⌃⌘F) / Help (key mapping)
           NSMenu *bar = [NSMenu new];
           NSMenu *(^add)(const char *) = ^NSMenu *(const char *t) { NSMenuItem *it = [NSMenuItem new]; [bar addItem:it]; NSMenu *m = [[NSMenu alloc] initWithTitle:@(t)]; it.submenu = m; return m; };
-          [[add("") addItemWithTitle:@(ui("dmAppQuit")) action:@selector(quit:) keyEquivalent:@"q"] setTarget:ctl];
+          NSMenu *applicationMenu = add("");
+          [[applicationMenu addItemWithTitle:@(ui("dmSyncPasteCode")) action:@selector(paste:) keyEquivalent:@"v"] setTarget:nil];
+          [applicationMenu addItem:NSMenuItem.separatorItem];
+          [[applicationMenu addItemWithTitle:@(ui("dmAppQuit")) action:@selector(quit:) keyEquivalent:@"q"] setTarget:ctl];
           NSMenuItem *fs = [add(ui("dmAppMenuView")) addItemWithTitle:@(ui("dmAppFullscreen")) action:@selector(toggleFullScreen:) keyEquivalent:@"f"]; fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
@@ -270,6 +292,7 @@ void front_run(void (*guest)(void)) {
             }];
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel handler:^NSEvent *(NSEvent *e) {
                 if (e.window != win || e.scrollingDeltaY == 0) return e;
+                if(dm_sync_ui_active()){CGFloat d=e.scrollingDeltaY/(e.hasPreciseScrollingDeltas?12.0:1.0);int n=(int)d;if(!n)n=d>0?1:-1;dm_sync_ui_scroll(n);return nil;}
                 static int gen; int my = ++gen; g_wheel = e.scrollingDeltaY > 0 ? 1 : -1; push();
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (my == gen) { g_wheel = 0; push(); } });
                 return nil;

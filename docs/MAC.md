@@ -41,7 +41,7 @@ Double-click the App. The first launch asks you to choose the **game resource fo
 
 A key reference is then shown once; afterwards it is under Help in the menu bar.
 
-Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, everything else in English). To change it: Options → Custom, the language switch in the first row → Accept All → close and reopen the App.
+Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, Korean in Korean, Portuguese in Portuguese, everything else in English). To change it: Options → Custom, the language switch in the first row → Accept All → close and reopen the App. The language row has six options in two rows of three (the Portuguese option is last).
 
 ## Keyboard ↔ gamepad
 
@@ -143,6 +143,5 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
 - The free town portal on ZR + Space of a gamepad is not there.
-- The quest bar on the left in rifts is not there.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
 - The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.

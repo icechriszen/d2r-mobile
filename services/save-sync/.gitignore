@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars*
+devices.private.json
+connection-*.txt
+wrangler.local.jsonc
+wrangler.test.local.jsonc
+private/

@@ -1,0 +1,10 @@
+{
+  "name": "d2r-save-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-25",
+  "r2_buckets": [{ "binding": "SAVES", "bucket_name": "d2r-private-saves" }],
+  "triggers": { "crons": ["17 4 * * *"] },
+  "observability": { "enabled": true }
+  // DEVICES is a Worker secret: {"device-id":{"hash":"sha256(token)","name":"iPhone"}}
+  // Create a separate bucket/Worker for tests. Never enable r2.dev on either bucket.
+}

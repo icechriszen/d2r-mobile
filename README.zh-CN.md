@@ -8,6 +8,19 @@
 
 English: [README.md](README.md) · Español: [README.es.md](README.es.md)
 
+## 本分支：跨平台云存档
+
+**[跨平台云存档配置与使用教程（中文）](services/save-sync/README.zh-CN.md) · [English reference](services/save-sync/README.md)**
+
+本分支新增可自行部署的 **Cloudflare Workers + 私有 R2** 云存档，支持 **iPhone、安卓和 Mac**。游戏内入口为 **设置 → 自定义 → 云存档**。免费 Apple 账号签名也可使用，无需 iCloud 权限；R2 与 iCloud 同步互斥。
+
+- 保存后自动同步，也可点击「立即同步」；以整套角色和仓库存档为单位，画质、触控设置仍保留在本机。
+- 不同设备进度冲突时保留两份，由玩家选择；支持历史恢复。游戏运行期间下载的新进度在重新打开应用后生效。
+- 先部署自己的服务，为每台设备生成独立连接文件，再在游戏内粘贴或导入。教程包含部署、连接、撤销、备份和维护步骤；安装包不提供维护者的服务地址、设备令牌或 Cloudflare 管理密钥。
+- 「本机已保存」与「云端已同步」是不同状态；切换设备前请等待云端确认。后台上传只能尽力完成，强制关闭应用可能中断上传。
+
+已使用隔离存档完成 iPhone → 安卓 → Mac → iPhone 的游玩、保存、上传及重开读档循环，核对角色、背包及共享仓库进度，并实测触屏、鼠标／滚轮和安卓手柄操作。这不代表秘境等扩展玩法及所有外设组合均已逐项验收。鸿蒙、tvOS 和 Windows 原版的 R2 同步不在本次实现范围内。
+
 <p align="center">
   <img src="https://github.com/jhaizhou-ops/d2r-mobile/releases/download/assets/hero_zh.jpg" width="100%" alt="iPhone 上全面屏铺满的游戏画面：地狱难度的哈洛加斯，红门通往秘境">
 </p>
@@ -148,7 +161,7 @@ iPhone 与 iPad 共用一个安装包。
 | 符文之语助手 | 长按带孔底材，列出能做的符文之语和属性；符文齐了一键镶嵌 |
 | 小地图指引 | 每张地图标出小站和出入口，并写上传送点和入口通向的区域名（iOS / Mac）；所有任务终点上图；目标在画面外时贴着屏幕边写名字 |
 | 省掉的琐事 | 鉴定免费、回城免费、进局直接落在传送小站旁、一键重开、商人货架可刷新、找阿卡拉洗点免费且不限次数 |
-| 存档 | 切后台、划掉、退出都立刻存盘；iCloud 多设备同步（需要付费开发者账号签名） |
+| 存档 | 本地保存；可自建 R2，在 iPhone、安卓和 Mac 间同步，支持免费 Apple 账号。上游 iCloud 同步需相应签名权限，两种同步方式互斥；后台上传只能尽力完成。 |
 | 娱乐模式（实验） | 越肩视角与第一人称：右半屏拖动看四周、画面外怪物指针、地图上的人物朝向指针（[说明](docs/over-the-shoulder-camera.zh-CN.md)；与 [@yyan160](https://github.com/yyan160) 合作，[#165](https://github.com/jhaizhou-ops/d2r-mobile/pull/165)） |
 
 多数功能能在游戏里「选项 → 自定义」页逐项开关。
@@ -239,7 +252,7 @@ flowchart LR
 - **「这台设备要多做一步」**：这台手机可以玩，只是做安装包时没有带上老机型补充包。照 [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) 做好补充包、带着它重新做一次安装包再装，就能进游戏。
 - **「暂不支持本机型……iPhone 15 Pro 及以后可以玩」**：这是 v1.0.9 以前的旧文字。用的是旧版本，更新到最新版本即可；A16 及更早的机型照上一条做。
 
-**自己做的包和我们内测包的差别**：公开版可以用免费的 Apple ID 自己做包、自己装。内测包里有三样公开版没有：iCloud 存档同步（需要 App 带着 iCloud 的签名权限，自己签的包没有）、App 内下载补充包与资源、新版本提醒（这两样要用到我们自己的服务端）。游戏本身和我们加的玩法两边一样。
+**自己做的包和我们内测包的差别**：公开版可以用免费的 Apple ID 自己做包、自己装。内测包里有三样公开版没有：iCloud 存档同步（需要 App 带着 iCloud 的签名权限，自己签的包没有）、App 内下载补充包与资源、新版本提醒（这两样要用到我们自己的服务端）。游戏本身和我们加的玩法两边一样。**本分支另提供无需 iCloud 权限的自建 R2 云存档**，见[配置教程](services/save-sync/README.zh-CN.md)。
 
 ## 开始使用
 
@@ -268,7 +281,7 @@ iPhone / iPad 的两种做法对比：
 | 现状 | 主路，上面的一切都出自它 | Windows 上从做包到真机游玩整条走通，两个系统做出的游戏程序逐字节相同；只剩用自签工具签名这一步等你来反馈 |
 | 说明 | 下面三步 | [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md) |
 
-签名用的 Apple 账号：付费的开发者账号功能最全；免费的 Apple ID 也可以（没有 iCloud 存档同步，每 7 天要重新签名重装）。完整的依赖清单见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md)。
+签名用的 Apple 账号：付费的开发者账号功能最全；免费的 Apple ID 也可以（没有 iCloud 存档同步，每 7 天要重新签名重装）。免费账号仍可使用自建 [R2 云存档](services/save-sync/README.zh-CN.md)，签名续期要求不变。完整的依赖清单见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md)。
 
 ### 有 Mac：三步
 
@@ -307,7 +320,7 @@ dm/tools/mac_app.sh                  # macOS 26 及以上：产出 ~/dm-work/out
 DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.app
 ```
 
-界面用原版的手柄版界面。键盘：空格确认、Esc 返回、回车、`=` 键开菜单 / 新角色，W A S D 移动，其余手柄键各有对应。鼠标：点怪、NPC、物件会走过去交互，底部的技能格、药水格、按键提示、面板里的按钮和页签、建角时的职业、小地图都能点；点空地会走过去、按住一直走，点怪是攻击，物品的双击和拖放也认鼠标。用键盘时屏上的按键提示直接显示键盘键名。存档在这台 Mac 上（要 iCloud 同步需付费开发者账号、带 `DM_MAC_ICLOUD=1` 构建，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)），可以从 iPhone / iPad 手工导入。键位表、建角怎么按、鼠标能做什么、导入步骤和已知不足，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。键盘、实体手柄这几项还未经真人操作，你试过的话，请告诉我们结果。
+界面用原版的手柄版界面。键盘：空格确认、Esc 返回、回车、`=` 键开菜单 / 新角色，W A S D 移动，其余手柄键各有对应。鼠标：点怪、NPC、物件会走过去交互，底部的技能格、药水格、按键提示、面板里的按钮和页签、建角时的职业、小地图都能点；点空地会走过去、按住一直走，点怪是攻击，物品的双击和拖放也认鼠标。用键盘时屏上的按键提示直接显示键盘键名。存档默认保存在这台 Mac 上；本分支可通过 [R2 云存档](services/save-sync/README.zh-CN.md) 与 iPhone、安卓同步。另选 iCloud 同步需付费开发者账号、带 `DM_MAC_ICLOUD=1` 构建，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。也可从 iPhone / iPad 手工导入。键位表、建角怎么按、鼠标能做什么、导入步骤和已知不足，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。本分支已实测 Mac 鼠标／滚轮及安卓实体手柄导航，尚不宣称 Mac 实体手柄操作已实测。
 
 ### 安卓
 

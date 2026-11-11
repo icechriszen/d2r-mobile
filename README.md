@@ -8,6 +8,19 @@ Platforms: iPhone / iPad (iOS 26 and later; iOS 18 – 25 with the older-API bui
 
 中文: [README.zh-CN.md](README.zh-CN.md) · Español: [README.es.md](README.es.md)
 
+## Cross-platform cloud saves in this fork
+
+**[R2 setup and usage guide (中文)](services/save-sync/README.zh-CN.md) · [English reference](services/save-sync/README.md)**
+
+This fork adds optional, self-hosted **Cloudflare Workers + private R2** save sync for **iPhone, Android and Mac**. Open **Options → Custom → Cloud Saves** in the game. It works with a free Apple signing account and does not require iCloud; R2 and iCloud sync are mutually exclusive.
+
+- Sync complete character and stash snapshots automatically after saving, or use **Sync Now**. Graphics and touch settings remain local.
+- Conflicting progress is preserved for you to choose; history lets you restore an earlier version. Updates downloaded while the game is open take effect after reopening the app.
+- Deploy your own service, generate a separate connection file for each device, then paste or import it in-game. The guide covers deployment, connection, revocation, backups and maintenance. No maintainer service address, device token or Cloudflare management key is supplied in the app.
+- **Saved Locally** and **Synced to Cloud** are separate states. Wait for cloud confirmation before switching devices; background upload is best effort and may be interrupted by forced termination.
+
+An isolated iPhone → Android → Mac → iPhone gameplay/save/upload/reopen cycle has been verified, including character, inventory and shared-stash progress. Touch, mouse/wheel and Android gamepad operation were checked on the tested devices. This does not establish exhaustive coverage of expansion modes or other hardware combinations. R2 sync for HarmonyOS, tvOS and the original Windows game is outside this implementation's scope.
+
 <p align="center">
   <img src="https://github.com/jhaizhou-ops/d2r-mobile/releases/download/assets/hero_en.jpg" width="100%" alt="The game filling the whole edge-to-edge screen of an iPhone: Harrogath on Hell, with the red portal to the Greater Rift">
 </p>
@@ -148,7 +161,7 @@ Enter through the red portal in Harrogath after completing Hell. There are 100 l
 | Runeword helper | Long-press a socketed base to list the Runewords it can make and their stats; once you have the runes, socket them all in one tap |
 | Minimap guidance | Every map marks its Waypoint and exits, labelled "Waypoint" and with the name of the area each entrance leads to (iOS / Mac); every quest goal is on the map; when a target is off screen, its name is written along the screen edge |
 | Chores removed | Free identification, free Town Portal with no scrolls needed, spawning right beside the Waypoint, Quick Restart, refreshable vendor stock, free and unlimited respecs at Akara |
-| Saves | Saved immediately when you switch apps, swipe the app away or quit; iCloud sync across devices (requires signing with a paid developer account) |
+| Saves | Local saving; optional self-hosted R2 sync across iPhone, Android and Mac, including free Apple accounts. Upstream iCloud sync requires the signing entitlement; use only one sync provider. Background uploads are best effort. |
 | Entertainment mode (experimental) | Over-the-shoulder and first-person camera: drag the right half to look around, arrows for monsters off the picture, a facing pointer on the map ([details](docs/over-the-shoulder-camera.md); contributed with [@yyan160](https://github.com/yyan160), [#165](https://github.com/jhaizhou-ops/d2r-mobile/pull/165)) |
 
 Most features can be toggled one by one in game under Options → Custom.
@@ -239,7 +252,7 @@ Minimum: **an A14 / M1 chip or later** — the graphics layer needs Metal 3, whi
 - **"One More Step for This Device"**: this phone can run the game; the install package was made without the Legacy Device Pack. Make the pack as in [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md), make the install package again with it and reinstall.
 - **"Device Not Supported … iPhone 15 Pro and later can play"**: this is the old text from before v1.0.9. You are on an old version; update to the latest. For A16 and earlier devices, then follow the line above.
 
-**What a package you build yourself does not have, compared with our test-group builds**: the public version can be built and installed with a free Apple ID. Three things in our test-group builds are not in it: iCloud save sync (the App needs the iCloud signing entitlement, which a self-signed package does not have), downloading packs and resources inside the App, and new-version notices (these two use our own server). The game itself and the features we added are the same.
+**What a package you build yourself does not have, compared with our test-group builds**: the public version can be built and installed with a free Apple ID. Three things in our test-group builds are not in it: iCloud save sync (the App needs the iCloud signing entitlement, which a self-signed package does not have), downloading packs and resources inside the App, and new-version notices (these two use our own server). The game itself and the features we added are the same. **This fork also provides self-hosted R2 save sync without an iCloud entitlement**; see the [setup guide](services/save-sync/README.zh-CN.md).
 
 ## Getting started
 
@@ -268,7 +281,7 @@ The two routes for iPhone / iPad compared:
 | Status | The main route; everything above comes from it | Works end to end on Windows, from making the package to playing on a device, and the game program produced on the two systems is byte-for-byte identical; the one step nobody has tried yet is signing with a sideloading tool — try it and tell us |
 | Instructions | The three steps below | [docs/NO_XCODE.md](docs/NO_XCODE.md) |
 
-The Apple account used for signing: a paid developer account gives you everything; a free Apple ID works too (no iCloud save sync, and the app has to be re-signed and reinstalled every 7 days). The full list of dependencies is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+The Apple account used for signing: a paid developer account gives you everything; a free Apple ID works too (no iCloud save sync, and the app has to be re-signed and reinstalled every 7 days). Self-hosted [R2 sync](services/save-sync/README.md) remains available with a free account; the signing renewal requirement is unchanged. The full list of dependencies is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
 ### With a Mac: three steps
 
@@ -307,7 +320,7 @@ dm/tools/mac_app.sh                  # macOS 26 or later: produces ~/dm-work/out
 DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25: produces D2R Mobile M3.app
 ```
 
-The interface is the original's gamepad interface. Keyboard: Space confirms, Esc goes back, Return, the `=` key opens the menu / a new character, W A S D moves, and every other gamepad button has a key. Mouse: clicking a monster, NPC or object walks over and interacts, and the skill slots, potion cells and key hints at the bottom, buttons and tabs in panels, the class figures when creating a character and the minimap can all be clicked; clicking empty ground walks there and holding keeps walking, clicking a monster attacks it, and items take double clicks and drags. With a keyboard, the prompts on screen show keyboard keys. Saves stay on this Mac (iCloud sync needs a paid developer account and a build with `DM_MAC_ICLOUD=1`, see [docs/MAC.md](docs/MAC.md)) and can be imported by hand from an iPhone / iPad. The key table, how to create a character, what the mouse can do, the import steps and the known shortcomings are in [docs/MAC.md](docs/MAC.md). Keyboard and a physical gamepad have not been operated by a person yet — if you try it, please tell us how it went.
+The interface is the original's gamepad interface. Keyboard: Space confirms, Esc goes back, Return, the `=` key opens the menu / a new character, W A S D moves, and every other gamepad button has a key. Mouse: clicking a monster, NPC or object walks over and interacts, and the skill slots, potion cells and key hints at the bottom, buttons and tabs in panels, the class figures when creating a character and the minimap can all be clicked; clicking empty ground walks there and holding keeps walking, clicking a monster attacks it, and items take double clicks and drags. With a keyboard, the prompts on screen show keyboard keys. Saves stay on this Mac by default; this fork optionally synchronizes them with iPhone and Android through [R2](services/save-sync/README.md). Alternatively, iCloud sync needs a paid developer account and a build with `DM_MAC_ICLOUD=1`, see [docs/MAC.md](docs/MAC.md). Manual import from an iPhone / iPad is also available. The key table, how to create a character, what the mouse can do, the import steps and the known shortcomings are in [docs/MAC.md](docs/MAC.md). This fork has verified Mac mouse/wheel input and Android physical-gamepad navigation; physical-gamepad operation on Mac is not claimed as tested.
 
 ### Android
 

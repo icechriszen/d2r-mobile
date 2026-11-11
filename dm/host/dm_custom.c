@@ -273,7 +273,9 @@ void dm_custom_ui_pump(unsigned long long root) {
               else set_toggle(cw, !TOGGLED(cw)); } }
       if (dm) { int32_t *r = (int32_t *)(dm + 0x70), want[4] = { 99999, 0, r[2], r[3] };   /* 不用时只把 x 挪出屏：它在滚动区里，y 放远了会撑大可滚范围 | when unused only x is moved off screen: it is inside the scroll area, and a far-away y would enlarge the scrollable range */
           if (dm_padmode_current() && tw && cw) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = t[1] < c[1] ? t[1] : c[1], bot = t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3];   // 框住整行：文字与勾选框两者的上下沿取并，再各放 10 单位（原先只按文字框的高度算，文字框比字矮，框成了横穿文字中线的一条） | Frame the whole row: take the union of the top and bottom edges of the text and the checkbox, then pad 10 units on each side (previously computed from the text box height only; the text box is shorter than the glyphs, so the frame became a strip cutting across the middle of the text)
-              want[0] = t[0] - 30; want[1] = top - 10; want[2] = c[0] + c[2] + 30 - want[0]; want[3] = bot - top + 20;
+              // Radio labels can extend beyond the last checkbox: include both full rectangles.
+              int left = t[0] < c[0] ? t[0] : c[0], right = t[0] + t[2] > c[0] + c[2] ? t[0] + t[2] : c[0] + c[2];
+              want[0] = left - 30; want[1] = top - 10; want[2] = right + 30 - want[0]; want[3] = bot - top + 20;
               // 云存档按钮缩放为 0.75；基类尺寸尚未含缩放，选择框也须按显示尺寸计算。
               // The cloud button uses scale 0.75; its base rectangle is unscaled, so match the visible size.
               if(sel<0){want[2]=(int)(c[2]*0.75f)+60;want[3]=(int)(c[3]*0.75f)+20;}

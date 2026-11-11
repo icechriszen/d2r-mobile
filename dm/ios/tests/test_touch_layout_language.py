@@ -52,10 +52,20 @@ for row in (0, 1):
         assert t['y'] == b['y'], (key, b, t)
         right = t['x'] + t['width']
     assert right <= 1385, (row, right)
-# 两行：同一列的第二行在第一行下面一整行（70），行高够放下两行与提示
+# Both rows share three aligned columns, with space between label bounds and the next checkbox.
+for upper, lower in zip(opts[:3], opts[3:]):
+    a = nodes['TouchCustom_lang_' + upper[0]]['fields']['rect']
+    b = nodes['TouchCustom_lang_' + lower[0]]['fields']['rect']
+    assert a['x'] == b['x'], (a, b)
+for row in (opts[:3], opts[3:]):
+    for current, following in zip(row, row[1:]):
+        label = nodes['TouchCustomLang%s_Text' % current[1]]['fields']['rect']
+        box = nodes['TouchCustom_lang_' + following[0]]['fields']['rect']
+        assert box['x'] - label['x'] - label['width'] >= 60
+# Two rows have a 20-unit vertical gap; the restart hint stays below both.
 r0 = nodes['TouchCustom_lang_ru']['fields']['rect']
 r1 = nodes['TouchCustom_lang_zh']['fields']['rect']
-assert r0['y'] == r1['y'] + 70, (r0, r1)
+assert r0['y'] == r1['y'] + 90, (r0, r1)
 lab = nodes['TouchCustom_lang_Text']['fields']
 assert lab['text'] == '' and lab['rect']['x'] == 0 and lab['rect']['width'] >= 1385, lab
 assert lab['rect']['height'] >= r0['y'] - lab['rect']['y'] + 70, lab

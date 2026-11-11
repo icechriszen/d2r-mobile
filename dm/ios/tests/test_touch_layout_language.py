@@ -37,7 +37,10 @@ for key, cap, label, _, _ in opts:
     assert box['fields']['onClickMessage'].endswith('TouchCustom_lang_' + key), key
     assert nodes['TouchCustomLang%s_Text' % cap]['fields']['text'] == '@' + label, key
     assert nodes['TouchCustomLangHint%s' % cap]['fields']['text'] == '@dmCustomLangHint' + cap, key
-    assert nodes['TouchCustomLangHint%s' % cap]['fields']['rect']['x'] > 10000, 'hint starts off screen and the host moves it'
+    hint_fields = nodes['TouchCustomLangHint%s' % cap]['fields']
+    assert hint_fields['rect']['x'] > 10000, 'hint starts off screen and the host moves it'
+    assert hint_fields['style/pointSize'] <= 36
+    assert hint_fields['rect']['height'] >= 80
 # 每项勾选框在前、字在后（字在勾选框右边 10）；同一行从左到右不重叠，全在各行勾选框那一列的右沿（1385）以内
 # 文字框宽：实宽按俄语界面真包截图量（中文 99、English 166、Español 178、Русский 188；한국어按字体同比约 136，
 # Português 按重音字母同比约 260），框比实宽多 30 不折行（180 宽时 English 折成「Englis h」）

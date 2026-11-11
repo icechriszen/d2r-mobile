@@ -1209,13 +1209,13 @@ _CUSTOM_ROWS = tuple((k, '@' + _custom_key(k)) for k in _CUSTOM_KEYS)
 # 但它不动滚动区里别的控件——各行包在一个容器 TouchCustomRows 里、挂在原版滚动区 ScrollView 下，内容多高原版就滚多高、滚出列表框的由原版裁掉
 # （和别的选项页同一套滚动：拖动、滚动条、滚轮）。原先各行直接钉在面板上、不在滚动区里，列表框只有 1260 高，11 行把行高压到了 98。
 # 尺寸取自同一控件树里表格排出来的值：行高 180；文字 1000×180；勾选框在行内 x 1315、70×70 垂直居中。标题行 180（下面的分隔金线按 180 行高摆）。
-# 例外：第一行语言开关是两行三列（_CUSTOM_LANG_H = 248：上边距 8 + 两行 90 + 提示 60）。
+# 例外：第一行语言开关是两行三列（_CUSTOM_LANG_H = 268：上边距 8 + 两行 90 + 提示 80）。
 # 第一行是语言开关（宿主键表里也排第一），之后是 _CUSTOM_KEYS 各行；加行 = 往 _CUSTOM_KEYS 加键（宿主 dm_custom.c 的 k_keys 同序加）
 # The video page's class hides any table row it does not recognize as a whole row (widget tree: our rows have +0x50 = 0, and only the header rows without checkboxes stay visible), so the rows do not go into the table;
 # but it does not touch other widgets in the scroll area -- the rows are wrapped in a container TouchCustomRows hung under the original scroll area ScrollView, so the original game scrolls as far as the content is tall and clips whatever scrolls out of the list box
 # (the same scrolling as the other option pages: drag, scrollbar, wheel). Previously the rows were pinned directly on the panel, outside the scroll area; the list box is only 1260 high, and 11 rows squeezed the row height down to 98.
 # Dimensions are taken from the values the table lays out in the same widget tree: row height 180; text 1000×180; checkbox at x 1315 within the row, 70×70, vertically centered. Header row 180 (the gold divider line below it is placed for a 180 row height).
-# Exception: the first row (language switch) is two lines by three columns (_CUSTOM_LANG_H = 248: 8 top padding + two 90-high lines + 60 for the hint).
+# Exception: the first row (language switch) is two lines by three columns (_CUSTOM_LANG_H = 268: 8 top padding + two 90-high lines + 80 for the hint).
 # The first row is the language switch (also first in the host's key table), followed by the rows of _CUSTOM_KEYS; adding a row = adding a key to _CUSTOM_KEYS (and to k_keys in the host's dm_custom.c in the same order)
 _CUSTOM_TITLE_H, _CUSTOM_LINE_H = 180, 180
 _CUSTOM_ALL = (('lang', '@dmCustomLang'),) + _CUSTOM_ROWS
@@ -1234,7 +1234,7 @@ _CUSTOM_Q3D_H = 2 * _CUSTOM_LINE_H
 # The language row (first row) is a two-line by three-column radio: 8 top padding, two 90-high option lines, and 60 below for the "restart to apply" hint
 _LANG_OPT_H = 90     # 70 高控件 + 20 行间距 | 70-high controls plus a 20-unit row gap
 _LANG_TOP = 8        # 第一条选项距行顶 | first option line's offset from the row top
-_CUSTOM_LANG_H = _LANG_TOP + 2 * _LANG_OPT_H + 60
+_CUSTOM_LANG_H = _LANG_TOP + 2 * _LANG_OPT_H + 80
 _CUSTOM_ROW_H = [(0 if k in _CUSTOM_HIDDEN else _CUSTOM_LANG_H if k == 'lang' else 3 * _CUSTOM_LINE_H if k in ('cam', 'bright', 'scale3d') else _CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
 _CUSTOM_Y = [_CUSTOM_TITLE_H + _CUSTOM_LINE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + _CUSTOM_LINE_H + sum(_CUSTOM_ROW_H)
@@ -1250,7 +1250,7 @@ def _custom_toggle_row(i, key, label):
             '            "onClickMessage": "PanelManager:ClosePanel:TouchCustom_%s" } },\n') % (key, y, h, label, key, y + (h - 70) // 2, key)
 # 语言开关（第一行）：六项单选「中文 / English / Español / Русский / 한국어 / Português」，下次启动生效（宿主 dm_custom.c 的 lang、hle_fs.c settings_lang_apply）。
 # 六项一排放不下（葡萄牙语一项就要约 280 宽），所以排成两行、每行三项。下面 60 留给「重启游戏后生效」那句（先放屏外，勾选与当前语言不一致时宿主摆到这一行下半，横坐标取标签的）
-_CUSTOM_LANG_HINT = ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomLangHint%s", "fields": { "rect": { "x": 99999, "y": %d, "width": 1400, "height": 60 }, "text": "@dmCustomLangHint%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal" } },\n'
+_CUSTOM_LANG_HINT = ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomLangHint%s", "fields": { "rect": { "x": 99999, "y": %d, "width": 1385, "height": 80 }, "text": "@dmCustomLangHint%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal", "style/pointSize": 36 } },\n'
                             % (n, _CUSTOM_Y[0] + _LANG_TOP + 2 * _LANG_OPT_H, n) for n in ('Zh', 'En', 'Es', 'Ru', 'Ko', 'Pt'))   # 六句各一个控件，宿主按选中的语言摆其中一句（贴在第二行选项下面）
 # 语言那一行是两行三列的六个选项「中文 / English / Español / Русский / 한국어 / Português」（单选：宿主 dm_custom.c 让六个勾选框互斥，存的是 lang 一个键）。
 # 这一行的字各界面都要写汉字、韩文和葡语重音：别的界面缺省的 Formal 字体没有这些字形（缺字画不出），所以这几个文字控件指定原版的全球字体 BlizzardGlobal
